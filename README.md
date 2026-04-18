@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Asistego API
 
 Proyecto FastAPI para Asistego.
@@ -20,3 +21,7 @@ La API estará disponible en http://localhost:8000
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
+=======
+# AsisteGoBack
+back end del proyecto
+>>>>>>> 2b964a22141aef833e395af441992be2b523adc7
