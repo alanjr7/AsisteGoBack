@@ -1,5 +1,6 @@
 """Utilidades de seguridad: hashing de contraseñas y JWT tokens."""
 from datetime import datetime, timedelta
+from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
 from dotenv import load_dotenv
@@ -52,3 +53,11 @@ def decode_access_token(token: str) -> dict:
         return payload
     except JWTError:
         return None
+
+
+def get_taller_id_from_token(token: str) -> Optional[str]:
+    """Extraer taller_id de un token JWT."""
+    payload = decode_access_token(token)
+    if payload:
+        return payload.get("taller_id")
+    return None

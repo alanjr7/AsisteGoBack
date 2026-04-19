@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Optional
 from pydantic import BaseModel
 from models import Factura, FacturaUpdate
@@ -6,8 +6,17 @@ from database_sql import get_db, Factura as FacturaDB, Solicitud, Cliente
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uuid
+from utils.security import get_taller_id_from_token
 
 router = APIRouter()
+
+
+def get_current_taller_id(authorization: str = Header(None)) -> Optional[str]:
+    """Extraer taller_id del token JWT."""
+    if not authorization:
+        return None
+    token = authorization.replace("Bearer ", "")
+    return get_taller_id_from_token(token)
 
 
 class FacturaCreateRequest(BaseModel):
@@ -31,6 +40,10 @@ def _factura_to_dict(f: FacturaDB) -> dict:
             "telefono": f.cliente.telefono,
             "email": f.cliente.email,
             "foto": f.cliente.foto,
+            "lat": getattr(f.cliente, 'lat', 0.0),
+            "lng": getattr(f.cliente, 'lng', 0.0),
+            "veces_atendido": getattr(f.cliente, 'veces_atendido', 0),
+            "calificacion_promedio": getattr(f.cliente, 'calificacion_promedio', None),
         } if f.cliente else None,
         "monto": f.monto,
         "comision": f.comision,
@@ -43,9 +56,20 @@ def _factura_to_dict(f: FacturaDB) -> dict:
 
 
 @router.get("/", response_model=List[Factura])
-def listar_facturas(db: Session = Depends(get_db)):
-    """Listar todas las facturas."""
-    facturas = db.query(FacturaDB).all()
+def listar_facturas(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Listar facturas del taller del usuario autenticado."""
+    taller_id = get_current_taller_id(authorization)
+    
+    # Join con Solicitud para filtrar por taller
+    query = db.query(FacturaDB).join(Solicitud, FacturaDB.solicitud_id == Solicitud.id)
+    
+    if taller_id:
+        query = query.filter(Solicitud.taller_id == taller_id)
+    
+    facturas = query.all()
     return [_factura_to_dict(f) for f in facturas]
 
 
@@ -153,17 +177,26 @@ def verificar_estado_pago(solicitud_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/stats/diarias")
-def estadisticas_diarias(db: Session = Depends(get_db)):
-    """Obtener estadísticas de facturas del día actual."""
+def estadisticas_diarias(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Obtener estadísticas de facturas del día actual del taller."""
     from datetime import date
     
+    taller_id = get_current_taller_id(authorization)
     hoy = date.today()
-    facturas_hoy = db.query(FacturaDB).filter(
-        FacturaDB.enviada == True
-    ).all()
     
-    # Filtrar por fecha manualmente (SQLite/MySQL compatible)
-    facturas_hoy = [f for f in facturas_hoy if f.created_at and f.created_at.date() == hoy]
+    # Join con Solicitud para filtrar por taller
+    query = db.query(FacturaDB).join(Solicitud, FacturaDB.solicitud_id == Solicitud.id)
+    
+    if taller_id:
+        query = query.filter(Solicitud.taller_id == taller_id)
+    
+    facturas = query.filter(FacturaDB.enviada == True).all()
+    
+    # Filtrar por fecha manualmente
+    facturas_hoy = [f for f in facturas if f.created_at and f.created_at.date() == hoy]
     
     total_facturas = len(facturas_hoy)
     ingresos_hoy = sum(f.monto for f in facturas_hoy)
@@ -180,9 +213,20 @@ def estadisticas_diarias(db: Session = Depends(get_db)):
 
 
 @router.get("/stats/resumen")
-def estadisticas_facturas(db: Session = Depends(get_db)):
-    """Obtener estadísticas de facturas."""
-    facturas = db.query(FacturaDB).all()
+def estadisticas_facturas(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Obtener estadísticas de facturas del taller."""
+    taller_id = get_current_taller_id(authorization)
+    
+    # Join con Solicitud para filtrar por taller
+    query = db.query(FacturaDB).join(Solicitud, FacturaDB.solicitud_id == Solicitud.id)
+    
+    if taller_id:
+        query = query.filter(Solicitud.taller_id == taller_id)
+    
+    facturas = query.all()
     
     total = len(facturas)
     ingresos = sum(f.monto for f in facturas)

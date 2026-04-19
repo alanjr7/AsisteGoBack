@@ -9,6 +9,17 @@ import os
 import shutil
 from datetime import datetime
 import uuid
+import traceback
+
+# Importaciones para foto de perfil
+try:
+    from database_sql import get_db, Taller
+    from utils.security import decode_access_token
+except ImportError as e:
+    print(f"[UPLOAD] Advertencia: No se pudieron importar dependencias de BD: {e}")
+    get_db = None
+    Taller = None
+    decode_access_token = None
 
 router = APIRouter()
 
@@ -17,9 +28,10 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 IMAGES_DIR = os.path.join(UPLOAD_DIR, "images")
 AUDIO_DIR = os.path.join(UPLOAD_DIR, "audio")
 COMPROBANTES_DIR = os.path.join(UPLOAD_DIR, "comprobantes")
+PERFILES_DIR = os.path.join(UPLOAD_DIR, "perfiles")
 
 # Crear directorios si no existen
-for dir_path in [UPLOAD_DIR, IMAGES_DIR, AUDIO_DIR, COMPROBANTES_DIR]:
+for dir_path in [UPLOAD_DIR, IMAGES_DIR, AUDIO_DIR, COMPROBANTES_DIR, PERFILES_DIR]:
     os.makedirs(dir_path, exist_ok=True)
 
 # Tipos de archivo permitidos
@@ -185,7 +197,7 @@ async def get_file(folder: str, filename: str):
     Servir un archivo estático (imagen, audio o comprobante).
     """
     # Validar que la carpeta sea válida
-    if folder not in ["images", "audio", "comprobantes"]:
+    if folder not in ["images", "audio", "comprobantes", "perfiles"]:
         raise HTTPException(status_code=400, detail="Carpeta no válida")
     
     file_path = os.path.join(UPLOAD_DIR, folder, filename)
@@ -222,7 +234,7 @@ async def delete_file(
     if not authorization:
         raise HTTPException(status_code=401, detail="No autorizado")
     
-    if folder not in ["images", "audio", "comprobantes"]:
+    if folder not in ["images", "audio", "comprobantes", "perfiles"]:
         raise HTTPException(status_code=400, detail="Carpeta no válida")
     
     file_path = os.path.join(UPLOAD_DIR, folder, filename)
@@ -235,3 +247,108 @@ async def delete_file(
         return {"success": True, "message": "Archivo eliminado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar: {str(e)}")
+
+
+# ==================== FOTO DE PERFIL ====================
+
+@router.put("/taller/perfil/foto")
+async def update_profile_photo(
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Actualizar foto de perfil del taller.
+    Requiere token de autorización.
+    Retorna la URL de la nueva foto.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    
+    # Verificar que las importaciones estén disponibles
+    if not all([get_db, Taller, decode_access_token]):
+        raise HTTPException(status_code=500, detail="Error de configuración del servidor: dependencias no disponibles")
+    
+    try:
+        # Decodificar token para obtener taller_id
+        token = authorization.replace("Bearer ", "")
+        payload = decode_access_token(token)
+        
+        if not payload:
+            raise HTTPException(status_code=401, detail="Token inválido")
+        
+        taller_id = payload.get("taller_id")
+        if not taller_id:
+            raise HTTPException(status_code=401, detail="No se encontró información del taller")
+        
+        print(f"[UPLOAD] Actualizando foto para taller: {taller_id}")
+        
+        # Validar archivo
+        if file.content_type not in ALLOWED_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Tipo de imagen no permitido. Permitidos: JPEG, PNG, WEBP"
+            )
+        
+        # Validar tamaño (5MB máximo para perfiles)
+        file.file.seek(0, os.SEEK_END)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        
+        if file_size > 5 * 1024 * 1024:  # 5MB
+            raise HTTPException(status_code=400, detail="La imagen no debe superar 5MB")
+        
+        # Generar nombre único con ID del taller
+        ext = os.path.splitext(file.filename)[1].lower()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"perfil_{taller_id}_{timestamp}{ext}"
+        file_path = os.path.join(PERFILES_DIR, filename)
+        
+        print(f"[UPLOAD] Guardando archivo: {file_path}")
+        
+        # Guardar archivo
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # URL relativa
+        url = f"/uploads/perfiles/{filename}"
+        
+        print(f"[UPLOAD] Actualizando base de datos...")
+        
+        # Actualizar en base de datos
+        db = next(get_db())
+        try:
+            taller = db.query(Taller).filter(Taller.id == taller_id).first()
+            if not taller:
+                raise HTTPException(status_code=404, detail="Taller no encontrado")
+            
+            # Eliminar foto anterior si existe
+            if taller.foto and taller.foto.startswith("/uploads/perfiles/"):
+                old_filename = taller.foto.replace("/uploads/perfiles/", "")
+                old_path = os.path.join(PERFILES_DIR, old_filename)
+                if os.path.exists(old_path):
+                    try:
+                        os.remove(old_path)
+                        print(f"[UPLOAD] Foto anterior eliminada: {old_path}")
+                    except Exception as e:
+                        print(f"[UPLOAD] No se pudo eliminar foto anterior: {e}")
+            
+            # Actualizar con nueva foto
+            taller.foto = url
+            db.commit()
+            print(f"[UPLOAD] Foto actualizada en BD: {url}")
+            
+        finally:
+            db.close()
+        
+        return {
+            "success": True,
+            "url": url,
+            "message": "Foto de perfil actualizada exitosamente"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_detail = f"{str(e)}\n{traceback.format_exc()}"
+        print(f"[UPLOAD] ERROR: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"Error al actualizar foto: {str(e)}")

@@ -146,6 +146,7 @@ class SolicitudBase(BaseModel):
 class SolicitudCreate(SolicitudBase):
     cliente_id: str
     vehiculo: VehiculoCreate
+    taller_id: Optional[str] = None  # Para asignar directamente desde la app móvil
 
 
 class SolicitudUpdate(BaseModel):
@@ -226,6 +227,8 @@ class RepuestoBase(BaseModel):
     marca: str
     categoria: str
     vehiculos_compatibles: List[str]
+    stock: int = 0
+    stock_minimo: int = 5
 
 
 class RepuestoCreate(RepuestoBase):
@@ -241,10 +244,13 @@ class RepuestoUpdate(BaseModel):
     marca: Optional[str] = None
     categoria: Optional[str] = None
     vehiculos_compatibles: Optional[List[str]] = None
+    stock: Optional[int] = None
+    stock_minimo: Optional[int] = None
 
 
 class Repuesto(RepuestoBase):
     id: str
+    taller_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -361,6 +367,7 @@ class PersonalBase(BaseModel):
     telefono: Optional[str] = None
     asistencias_dia: int = 0
     asistencias_mes: int = 0
+    taller_id: Optional[str] = None
 
 
 class PersonalCreate(PersonalBase):
@@ -375,6 +382,7 @@ class PersonalUpdate(BaseModel):
     telefono: Optional[str] = None
     asistencias_dia: Optional[int] = None
     asistencias_mes: Optional[int] = None
+    taller_id: Optional[str] = None
 
 
 class Personal(PersonalBase):
@@ -419,13 +427,15 @@ class Factura(FacturaBase):
 
 class TallerBase(BaseModel):
     nombre: str
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
     foto: Optional[str] = None
-    ubicacion: str
-    telefono: str
-    email: str
-    calificacion: float = 0.0
-    total_servicios: int = 0
+    lat: Optional[float] = 0.0
+    lng: Optional[float] = 0.0
     descripcion: Optional[str] = None
+    calificacion: Optional[float] = 0.0
+    total_servicios: Optional[int] = 0
 
 
 class TallerCreate(TallerBase):
@@ -434,13 +444,15 @@ class TallerCreate(TallerBase):
 
 class TallerUpdate(BaseModel):
     nombre: Optional[str] = None
-    foto: Optional[str] = None
-    ubicacion: Optional[str] = None
+    direccion: Optional[str] = None
     telefono: Optional[str] = None
     email: Optional[str] = None
+    foto: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    descripcion: Optional[str] = None
     calificacion: Optional[float] = None
     total_servicios: Optional[int] = None
-    descripcion: Optional[str] = None
 
 
 class Taller(TallerBase):
@@ -485,6 +497,8 @@ class RegisterRequest(BaseModel):
     nombre: str
     email: str
     password: str
+    taller_id: Optional[str] = None  # Para unirse a un taller existente
+    tipo_usuario: Optional[str] = "taller"  # "taller" o "cliente"
 
 
 class RegisterResponse(BaseModel):
@@ -505,11 +519,11 @@ class ChangePasswordResponse(BaseModel):
 
 
 class StatsResponse(BaseModel):
-    total_servicios: int
-    servicios_hoy: int
-    servicios_mes: int
-    ingresos_totales: float
-    calificacion_promedio: float
+    total_servicios: Optional[int] = 0
+    servicios_hoy: Optional[int] = 0
+    servicios_mes: Optional[int] = 0
+    ingresos_totales: Optional[float] = 0.0
+    calificacion_promedio: Optional[float] = 0.0
 
 
 # ============ EVIDENCIAS ============

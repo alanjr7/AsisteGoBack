@@ -1,7 +1,7 @@
 """
 Router para gestión de pagos entre taller y clientes.
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Optional
 from pydantic import BaseModel
 from models import (
@@ -12,11 +12,20 @@ from database_sql import get_db, Solicitud, Cliente, Factura as FacturaDB
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uuid
+from utils.security import get_taller_id_from_token
 
 # Importar WebSocket
 from routers.websocket import notify_pago_confirmado, notify_pago_completado
 
 router = APIRouter()
+
+
+def get_current_taller_id(authorization: str = Header(None)) -> Optional[str]:
+    """Extraer taller_id del token JWT."""
+    if not authorization:
+        return None
+    token = authorization.replace("Bearer ", "")
+    return get_taller_id_from_token(token)
 
 
 def _calcular_total(monto: float) -> tuple[float, float]:
@@ -32,13 +41,19 @@ async def confirmar_pago(data: ConfirmarPagoRequest, db: Session = Depends(get_d
     El taller confirma el monto a cobrar por un servicio.
     Esto notifica al cliente que puede proceder al pago.
     """
+    print(f"[PAGOS] 📤 Confirmando pago para solicitud {data.solicitud_id}, monto: {data.monto}")
+    
     # Validar que la solicitud existe
     solicitud = db.query(Solicitud).filter(Solicitud.id == data.solicitud_id).first()
     if not solicitud:
+        print(f"[PAGOS] ❌ Solicitud no encontrada: {data.solicitud_id}")
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    
+    print(f"[PAGOS] ✅ Solicitud encontrada, estado: {solicitud.estado.value}, estado_pago: {solicitud.estado_pago}")
     
     # Validar que la solicitud está finalizada
     if solicitud.estado.value != "finalizada":
+        print(f"[PAGOS] ❌ Solicitud no está finalizada: {solicitud.estado.value}")
         raise HTTPException(
             status_code=400, 
             detail=f"La solicitud debe estar finalizada para confirmar pago. Estado actual: {solicitud.estado.value}"
@@ -46,10 +61,12 @@ async def confirmar_pago(data: ConfirmarPagoRequest, db: Session = Depends(get_d
     
     # Validar monto
     if data.monto <= 0:
+        print(f"[PAGOS] ❌ Monto inválido: {data.monto}")
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
     
     # Calcular comisión y total
     comision, total = _calcular_total(data.monto)
+    print(f"[PAGOS] 💰 Calculado: comisión={comision}, total={total}")
     
     # Actualizar solicitud con estado de pago
     solicitud.estado_pago = "confirmado"
@@ -59,14 +76,20 @@ async def confirmar_pago(data: ConfirmarPagoRequest, db: Session = Depends(get_d
     db.commit()
     db.refresh(solicitud)
     
+    print(f"[PAGOS] ✅ Solicitud actualizada: estado_pago={solicitud.estado_pago}, monto_pago={solicitud.monto_pago}")
+    
     # Notificar al cliente vía WebSocket
-    await notify_pago_confirmado(
-        cliente_id=solicitud.cliente_id,
-        solicitud_id=data.solicitud_id,
-        monto=data.monto,
-        comision=comision,
-        total=total
-    )
+    try:
+        await notify_pago_confirmado(
+            cliente_id=solicitud.cliente_id,
+            solicitud_id=data.solicitud_id,
+            monto=data.monto,
+            comision=comision,
+            total=total
+        )
+        print(f"[PAGOS] 📢 Notificación WebSocket enviada al cliente {solicitud.cliente_id}")
+    except Exception as e:
+        print(f"[PAGOS] ⚠️ Error enviando notificación WebSocket: {e}")
     
     return {
         "success": True,
@@ -85,8 +108,11 @@ def verificar_estado_pago(solicitud_id: str, db: Session = Depends(get_db)):
     Verificar el estado de pago de una solicitud.
     Usado por el mobile para saber si hay un monto confirmado.
     """
+    print(f"[PAGOS] 🔍 Verificando estado de pago para solicitud {solicitud_id}")
+    
     solicitud = db.query(Solicitud).filter(Solicitud.id == solicitud_id).first()
     if not solicitud:
+        print(f"[PAGOS] ❌ Solicitud no encontrada: {solicitud_id}")
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     
     # Verificar si ya existe una factura pagada
@@ -100,7 +126,7 @@ def verificar_estado_pago(solicitud_id: str, db: Session = Depends(get_db)):
     
     comision, total = (0, 0) if not monto else _calcular_total(monto)
     
-    return {
+    response = {
         "solicitud_id": solicitud_id,
         "estado_pago": estado_pago,
         "monto": monto,
@@ -110,6 +136,9 @@ def verificar_estado_pago(solicitud_id: str, db: Session = Depends(get_db)):
         "factura_id": factura.id if factura else None,
         "pagado": factura is not None and factura.enviada
     }
+    
+    print(f"[PAGOS] 📄 Estado de pago response: {response}")
+    return response
 
 
 @router.post("/procesar", response_model=dict)
@@ -227,17 +256,27 @@ def listar_pagos_cliente(cliente_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/taller/pendientes", response_model=List[dict])
-def listar_pagos_pendientes(db: Session = Depends(get_db)):
+def listar_pagos_pendientes(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
     """
-    Listar solicitudes finalizadas que están esperando confirmación de pago o pago.
+    Listar solicitudes finalizadas del taller que esperan confirmación de pago.
     """
     from database_sql import EstadoSolicitud
     
-    # Solicitudes finalizadas con estado_pago pendiente o confirmado (pero no completado)
-    solicitudes = db.query(Solicitud).filter(
+    taller_id = get_current_taller_id(authorization)
+    
+    # Filtrar por taller y estado
+    query = db.query(Solicitud).filter(
         Solicitud.estado == EstadoSolicitud.FINALIZADA,
         Solicitud.estado_pago.in_(["pendiente", "confirmado"])
-    ).order_by(Solicitud.created_at.desc()).all()
+    )
+    
+    if taller_id:
+        query = query.filter(Solicitud.taller_id == taller_id)
+    
+    solicitudes = query.order_by(Solicitud.created_at.desc()).all()
     
     resultado = []
     for s in solicitudes:
@@ -266,32 +305,36 @@ def listar_pagos_pendientes(db: Session = Depends(get_db)):
 
 
 @router.get("/taller/resumen", response_model=dict)
-def resumen_pagos_taller(db: Session = Depends(get_db)):
+def resumen_pagos_taller(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
     """
     Resumen de pagos para el dashboard del taller.
     """
     from database_sql import EstadoSolicitud
     
+    taller_id = get_current_taller_id(authorization)
+    
+    # Base query para solicitudes del taller
+    base_query = db.query(Solicitud).filter(Solicitud.estado == EstadoSolicitud.FINALIZADA)
+    if taller_id:
+        base_query = base_query.filter(Solicitud.taller_id == taller_id)
+    
     # Contar por estado
-    pendientes = db.query(Solicitud).filter(
-        Solicitud.estado == EstadoSolicitud.FINALIZADA,
-        Solicitud.estado_pago == "pendiente"
-    ).count()
+    pendientes = base_query.filter(Solicitud.estado_pago == "pendiente").count()
+    confirmados = base_query.filter(Solicitud.estado_pago == "confirmado").count()
     
-    confirmados = db.query(Solicitud).filter(
-        Solicitud.estado == EstadoSolicitud.FINALIZADA,
-        Solicitud.estado_pago == "confirmado"
-    ).count()
-    
-    # Calcular monto total esperado (pagos confirmados no completados)
-    confirmados_query = db.query(Solicitud).filter(
-        Solicitud.estado == EstadoSolicitud.FINALIZADA,
-        Solicitud.estado_pago == "confirmado"
-    ).all()
+    # Calcular monto total esperado
+    confirmados_query = base_query.filter(Solicitud.estado_pago == "confirmado").all()
     monto_esperado = sum(s.monto_pago or 0 for s in confirmados_query)
     
-    # Calcular ingresos totales (facturas pagadas)
-    facturas_pagadas = db.query(FacturaDB).filter(FacturaDB.enviada == True).all()
+    # Calcular ingresos totales (facturas pagadas del taller)
+    facturas_query = db.query(FacturaDB).join(Solicitud, FacturaDB.solicitud_id == Solicitud.id)
+    if taller_id:
+        facturas_query = facturas_query.filter(Solicitud.taller_id == taller_id)
+    facturas_pagadas = facturas_query.filter(FacturaDB.enviada == True).all()
+    
     ingresos_totales = sum(f.monto for f in facturas_pagadas)
     comisiones_totales = sum(f.comision for f in facturas_pagadas)
     

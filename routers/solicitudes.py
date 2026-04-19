@@ -1,15 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Optional
 from pydantic import BaseModel
 from models import Solicitud, SolicitudCreate, SolicitudUpdate, EstadoSolicitud, AsignacionPersonalRequest
 from database_sql import (
-    get_db, Solicitud as SolicitudDB, Cliente, Personal, SolicitudPersonal,
+    get_db, Solicitud as SolicitudDB, Cliente, Personal, SolicitudPersonal, User,
     EstadoSolicitud as EstadoDB, TipoSolicitud as TipoDB
 )
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uuid
 import json
+from utils.security import decode_access_token, get_taller_id_from_token
 
 # Importar funciones WebSocket
 from routers.websocket import (
@@ -23,15 +24,37 @@ from routers.websocket import (
 router = APIRouter()
 
 
+def get_current_taller_id(authorization: str = Header(None)) -> Optional[str]:
+    """Extraer taller_id del token JWT."""
+    if not authorization:
+        return None
+    token = authorization.replace("Bearer ", "")
+    return get_taller_id_from_token(token)
+
+
 @router.get("/", response_model=List[Solicitud])
 def listar_solicitudes(
     estado: Optional[EstadoSolicitud] = None,
     pendientes: bool = False,
     activas: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
 ):
-    """Listar solicitudes con filtros opcionales."""
+    """Listar solicitudes del taller del usuario autenticado."""
+    taller_id = get_current_taller_id(authorization)
+    
     query = db.query(SolicitudDB)
+    
+    # Filtrar por taller: mostrar solicitudes del taller del usuario
+    # O solicitudes pendientes sin asignar (para que puedan ser "reclamadas")
+    if taller_id:
+        query = query.filter(
+            (SolicitudDB.taller_id == taller_id) | 
+            ((SolicitudDB.taller_id.is_(None)) & (SolicitudDB.estado == EstadoDB["PENDIENTE"]))
+        )
+    else:
+        # Si no tiene taller, solo mostrar solicitudes pendientes sin asignar
+        query = query.filter(SolicitudDB.taller_id.is_(None))
 
     if estado:
         query = query.filter(SolicitudDB.estado == estado.value)
@@ -120,17 +143,34 @@ def obtener_solicitud(solicitud_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=Solicitud)
-async def crear_solicitud(solicitud: SolicitudCreate, db: Session = Depends(get_db)):
-    """Crear nueva solicitud."""
-    # Validar cliente existe en MySQL
+async def crear_solicitud(
+    solicitud: SolicitudCreate,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None),
+    x_platform: str = Header("web", alias="X-Platform")
+):
+    """Crear nueva solicitud. Desde web asigna al taller del usuario, desde mobile puede especificar taller."""
+    # Obtener taller del usuario actual (si es web)
+    taller_id = get_current_taller_id(authorization)
+
+    # Desde mobile, usar el taller_id del body si se proporciona
+    if x_platform == "mobile" and solicitud.taller_id:
+        taller_id = solicitud.taller_id
+
+    # Validar cliente existe en PostgreSQL
     cliente = db.query(Cliente).filter(Cliente.id == solicitud.cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-    # Crear solicitud en MySQL
+    # Desde web requerir taller, desde mobile permitir sin asignar
+    if x_platform == "web" and not taller_id:
+        raise HTTPException(status_code=403, detail="Usuario no tiene un taller asignado")
+
+    # Crear solicitud en PostgreSQL
     nueva = SolicitudDB(
         id=str(uuid.uuid4()),
         cliente_id=solicitud.cliente_id,
+        taller_id=taller_id,  # NULL si es mobile y no tiene taller asignado
         vehiculo_marca=solicitud.vehiculo.marca,
         vehiculo_modelo=solicitud.vehiculo.modelo,
         vehiculo_anio=solicitud.vehiculo.anio,
@@ -151,9 +191,46 @@ async def crear_solicitud(solicitud: SolicitudCreate, db: Session = Depends(get_
     db.commit()
     db.refresh(nueva)
     
-    # Notificar al taller vía WebSocket
+    # Notificar vía WebSocket
     solicitud_dict = _solicitud_to_dict(nueva, db)
     await notify_solicitud_nueva(solicitud_dict)
+    
+    return solicitud_dict
+
+
+@router.post("/{solicitud_id}/asignar", response_model=Solicitud)
+async def asignar_solicitud_a_taller(
+    solicitud_id: str,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Asignar una solicitud sin taller al taller del usuario autenticado."""
+    taller_id = get_current_taller_id(authorization)
+    if not taller_id:
+        raise HTTPException(status_code=403, detail="Usuario no tiene un taller asignado")
+    
+    # Buscar solicitud
+    solicitud = db.query(SolicitudDB).filter(SolicitudDB.id == solicitud_id).first()
+    if not solicitud:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    
+    # Solo permitir asignar si está pendiente y sin taller
+    if solicitud.taller_id is not None:
+        raise HTTPException(status_code=400, detail="Esta solicitud ya tiene un taller asignado")
+    
+    if solicitud.estado != EstadoDB["PENDIENTE"]:
+        raise HTTPException(status_code=400, detail="Solo se pueden asignar solicitudes pendientes")
+    
+    # Asignar al taller
+    solicitud.taller_id = taller_id
+    solicitud.estado = EstadoDB["ACEPTADA"]  # Al asignar, cambia a aceptada
+    
+    db.commit()
+    db.refresh(solicitud)
+    
+    # Notificar asignación al cliente
+    solicitud_dict = _solicitud_to_dict(solicitud, db)
+    await notify_solicitud_aceptada(solicitud.cliente_id, solicitud_dict)
     
     return solicitud_dict
 

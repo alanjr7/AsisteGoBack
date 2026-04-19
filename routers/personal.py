@@ -1,12 +1,21 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Optional
 from models import Personal, PersonalCreate, PersonalUpdate, EstadoPersonal
 from database_sql import get_db, Personal as PersonalDB
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uuid
+from utils.security import get_taller_id_from_token
 
 router = APIRouter()
+
+
+def get_current_taller_id(authorization: str = Header(None)) -> Optional[str]:
+    """Extraer taller_id del token JWT."""
+    if not authorization:
+        return None
+    token = authorization.replace("Bearer ", "")
+    return get_taller_id_from_token(token)
 
 
 def _personal_to_dict(p: PersonalDB) -> dict:
@@ -20,6 +29,7 @@ def _personal_to_dict(p: PersonalDB) -> dict:
         "telefono": p.telefono,
         "asistencias_dia": p.asistencias_dia or 0,
         "asistencias_mes": p.asistencias_mes or 0,
+        "taller_id": p.taller_id,
     }
 
 
@@ -28,10 +38,17 @@ def listar_personal(
     estado: Optional[str] = None,
     rol: Optional[str] = None,
     disponibles: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
 ):
-    """Listar personal con filtros."""
+    """Listar personal del taller del usuario autenticado."""
+    taller_id = get_current_taller_id(authorization)
+    
     query = db.query(PersonalDB)
+    
+    # Filtrar por taller del usuario
+    if taller_id:
+        query = query.filter(PersonalDB.taller_id == taller_id)
 
     if estado:
         query = query.filter(PersonalDB.estado == estado)
@@ -55,9 +72,18 @@ def obtener_personal(personal_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=Personal)
-def crear_personal(empleado: PersonalCreate, db: Session = Depends(get_db)):
-    """Crear nuevo empleado."""
+def crear_personal(
+    empleado: PersonalCreate,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Crear nuevo empleado en el taller del usuario."""
+    taller_id = get_current_taller_id(authorization)
+    if not taller_id:
+        raise HTTPException(status_code=403, detail="Usuario no tiene un taller asignado")
+    
     nuevo = PersonalDB(
+        taller_id=taller_id,
         id=str(uuid.uuid4()),
         nombre=empleado.nombre,
         rol=empleado.rol,

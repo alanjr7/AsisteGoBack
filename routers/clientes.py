@@ -1,11 +1,20 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Optional
 from models import Cliente, ClienteCreate, ClienteUpdate
-from database_sql import get_db, Cliente as ClienteDB
+from database_sql import get_db, Cliente as ClienteDB, Vehiculo as VehiculoDB, Solicitud
 from sqlalchemy.orm import Session
+from utils.security import get_taller_id_from_token
 import uuid
 
 router = APIRouter()
+
+
+def get_current_taller_id(authorization: str = Header(None)) -> Optional[str]:
+    """Extraer taller_id del token JWT."""
+    if not authorization:
+        return None
+    token = authorization.replace("Bearer ", "")
+    return get_taller_id_from_token(token)
 
 
 def _cliente_to_dict(c: ClienteDB) -> dict:
@@ -24,9 +33,29 @@ def _cliente_to_dict(c: ClienteDB) -> dict:
 
 
 @router.get("/", response_model=List[Cliente])
-def listar_clientes(db: Session = Depends(get_db)):
-    """Listar todos los clientes."""
-    return [_cliente_to_dict(c) for c in db.query(ClienteDB).all()]
+def listar_clientes(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Listar clientes del taller del usuario autenticado."""
+    taller_id = get_current_taller_id(authorization)
+    
+    if taller_id:
+        # Obtener clientes que tienen solicitudes con este taller
+        clientes_ids = db.query(Solicitud.cliente_id).filter(
+            Solicitud.taller_id == taller_id
+        ).distinct().all()
+        clientes_ids = [c[0] for c in clientes_ids]
+        
+        if clientes_ids:
+            clientes = db.query(ClienteDB).filter(ClienteDB.id.in_(clientes_ids)).all()
+        else:
+            clientes = []
+    else:
+        # Si no tiene taller, no mostrar clientes (o mostrar todos para compatibilidad)
+        clientes = []
+    
+    return [_cliente_to_dict(c) for c in clientes]
 
 
 @router.get("/{cliente_id}", response_model=Cliente)
@@ -87,6 +116,26 @@ def servicios_cliente(cliente_id: str, db: Session = Depends(get_db)):
 
     # TODO: Implementar cuando servicios se migre a MySQL
     return []
+
+
+@router.get("/{cliente_id}/vehiculos")
+def vehiculos_cliente(cliente_id: str, db: Session = Depends(get_db)):
+    """Obtener vehículos registrados del cliente."""
+    cliente = db.query(ClienteDB).filter(ClienteDB.id == cliente_id).first()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    vehiculos = db.query(VehiculoDB).filter(VehiculoDB.cliente_id == cliente_id).all()
+    return [{
+        "id": v.id,
+        "marca": v.marca,
+        "modelo": v.modelo,
+        "anio": v.anio,
+        "placa": v.placa,
+        "color": v.color,
+        "tipo": v.tipo,
+        "activo": v.activo,
+    } for v in vehiculos]
 
 
 @router.get("/mine/by-email")
