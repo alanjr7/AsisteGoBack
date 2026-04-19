@@ -39,11 +39,14 @@ os.makedirs(os.path.join(UPLOAD_DIR, "perfiles"), exist_ok=True)
 # Servir archivos estáticos (imágenes, audios, comprobantes)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# Configurar CORS para desarrollo (permitir todos los orígenes locales)
+# Configurar CORS para producción (dominios específicos)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # Must be False when using "*"
+    allow_origins=[
+        "https://comforting-taiyaki-e1534c.netlify.app",  # Frontend en Netlify
+        "http://localhost:4200",  # Desarrollo local
+    ],
+    allow_credentials=True,  # Permitir cookies/tokens de autenticación
     allow_methods=["*"],
     allow_headers=["*"],
 )
