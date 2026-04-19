@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 import os
 import enum
 
-load_dotenv()
+# Cargar .env solo si no existe la variable en el entorno (no sobreescribir Render)
+load_dotenv(override=False)
 
 # Configuración de la base de datos
 def get_database_url():
