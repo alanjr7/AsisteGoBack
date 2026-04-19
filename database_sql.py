@@ -10,11 +10,29 @@ import enum
 load_dotenv()
 
 # Configuración de la base de datos
-# Usar SQLite por defecto para despliegue en Render sin PostgreSQL configurado
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./asistego.db")
+def get_database_url():
+    """Obtener y procesar la URL de base de datos."""
+    database_url = os.getenv("DATABASE_URL", "sqlite:///./asistego.db")
+    
+    # Render usa 'postgres://' pero SQLAlchemy necesita 'postgresql+psycopg2://'
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    
+    return database_url
 
-# Crear engine
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+DATABASE_URL = get_database_url()
+
+# Crear engine con opciones SSL para PostgreSQL (requerido por Render)
+if DATABASE_URL.startswith("postgresql"):
+    # Para PostgreSQL en Render, se requiere SSL
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"sslmode": "require"}
+    )
+else:
+    # Para SQLite (desarrollo local)
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
