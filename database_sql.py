@@ -23,14 +23,23 @@ def get_database_url():
 
 DATABASE_URL = get_database_url()
 
-# Crear engine con opciones SSL para PostgreSQL (requerido por Render)
+# Crear engine con opciones SSL para PostgreSQL
 if DATABASE_URL.startswith("postgresql"):
-    # Para PostgreSQL en Render, se requiere SSL
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        connect_args={"sslmode": "require"}
-    )
+    # Detectar si es Render (usa postgres.render.com) o local
+    if "render.com" in DATABASE_URL:
+        # Para PostgreSQL en Render, se requiere SSL
+        engine = create_engine(
+            DATABASE_URL,
+            pool_pre_ping=True,
+            connect_args={"sslmode": "require"}
+        )
+    else:
+        # Para PostgreSQL local (desarrollo), SSL opcional
+        engine = create_engine(
+            DATABASE_URL,
+            pool_pre_ping=True,
+            connect_args={"sslmode": "prefer"}
+        )
 else:
     # Para SQLite (desarrollo local)
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)

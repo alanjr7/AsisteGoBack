@@ -43,7 +43,8 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://comforting-taiyaki-e1534c.netlify.app",  # Frontend en Netlify
+        "https://asistego-front.netlify.app",  # Frontend actual en Netlify
+        "https://comforting-taiyaki-e1534c.netlify.app",  # Frontend anterior
         "http://localhost:4200",  # Desarrollo local
     ],
     allow_credentials=True,  # Permitir cookies/tokens de autenticación
