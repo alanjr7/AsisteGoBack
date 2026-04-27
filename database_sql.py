@@ -16,9 +16,11 @@ def get_database_url():
     """Obtener y procesar la URL de base de datos."""
     database_url = os.getenv("DATABASE_URL", "sqlite:///./asistego.db")
     
-    # Render usa 'postgres://' pero SQLAlchemy necesita 'postgresql+psycopg2://'
+    # Render usa 'postgres://' o 'postgresql://' pero SQLAlchemy necesita 'postgresql+psycopg2://'
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif database_url.startswith("postgresql://"):
+        database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     
     return database_url
 
