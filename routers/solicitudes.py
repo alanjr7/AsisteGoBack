@@ -80,7 +80,7 @@ def _convert_analisis_ia_to_camelcase(data: dict) -> dict:
     """Convertir claves de analisis_ia de snake_case a camelCase."""
     if not data:
         return None
-    
+
     key_mapping = {
         'transcripcion_audio': 'transcripcionAudio',
         'tipo_problema': 'tipoProblema',
@@ -92,8 +92,36 @@ def _convert_analisis_ia_to_camelcase(data: dict) -> dict:
         'resumen': 'resumen',
         'confianza': 'confianza',
     }
-    
+
     return {key_mapping.get(k, k): v for k, v in data.items()}
+
+
+def _parse_imagenes(imagenes_json: str) -> list:
+    """Parsear campo imagenes de forma segura."""
+    if not imagenes_json or imagenes_json.strip() == '':
+        return []
+    try:
+        imagenes_list = json.loads(imagenes_json)
+        if not isinstance(imagenes_list, list):
+            return []
+        return [ensure_full_url(img) for img in imagenes_list if img]
+    except json.JSONDecodeError as e:
+        print(f"[BACKEND] Error parseando imagenes: {e}")
+        return []
+
+
+def _parse_analisis_ia(analisis_ia_json: str) -> dict:
+    """Parsear campo analisis_ia de forma segura."""
+    if not analisis_ia_json or analisis_ia_json.strip() == '':
+        return None
+    try:
+        data = json.loads(analisis_ia_json)
+        if not isinstance(data, dict):
+            return None
+        return _convert_analisis_ia_to_camelcase(data)
+    except json.JSONDecodeError as e:
+        print(f"[BACKEND] Error parseando analisis_ia: {e}")
+        return None
 
 
 def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
@@ -153,13 +181,13 @@ def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
         "estado": s.estado.value if hasattr(s.estado, 'value') else s.estado,
         "requiere_repuestos": s.requiere_repuestos,
         "tipo": s.tipo.value if hasattr(s.tipo, 'value') else s.tipo,
-        "imagenes": [ensure_full_url(img) for img in json.loads(s.imagenes)] if s.imagenes else [],
+        "imagenes": _parse_imagenes(s.imagenes),
         "audio": ensure_full_url(s.audio) if s.audio else None,
         "mecanico_asignado": None,
         "personal_asignado": None,
         "estado_pago": s.estado_pago or "pendiente",
         "monto_pago": s.monto_pago,
-        "analisisIA": _convert_analisis_ia_to_camelcase(json.loads(s.analisis_ia)) if s.analisis_ia else None,
+        "analisisIA": _parse_analisis_ia(s.analisis_ia),
         "timestamp": s.created_at.isoformat() if s.created_at else None,
         "lat": s.lat,
         "lng": s.lng,
