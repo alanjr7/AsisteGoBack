@@ -7,7 +7,7 @@ from database_sql import get_db, Solicitud as SolicitudDB
 from sqlalchemy.orm import Session
 from datetime import datetime
 from utils.timezone import get_now
-from utils.openrouter_client import get_openrouter_client
+from utils.gemini_client import get_gemini_client
 from utils.rate_limiter import limiter, IA_RATE_LIMIT
 from utils.security import get_taller_id_from_token
 from utils.supabase_storage import ensure_full_url
@@ -130,7 +130,7 @@ def consultar_ia(request: Request, data: ConsultaIARequest):
     Rate limit: 10 requests por minuto por IP.
     """
     try:
-        client = get_openrouter_client()
+        client = get_gemini_client()
 
         # Construir contexto si hay solicitud_id
         contexto = None

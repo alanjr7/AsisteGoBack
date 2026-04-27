@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 import uuid
 
 from database_sql import get_db, Solicitud as SolicitudDB, Cliente, Personal
-from utils.openrouter_client import get_openrouter_client
+from utils.gemini_client import get_gemini_client
 from utils.rate_limiter import limiter, IA_BURST_LIMIT
 
 router = APIRouter()
@@ -345,8 +345,8 @@ def generar_diagnostico_ia(
             "tipo": solicitud.vehiculo_tipo,
         }
 
-        # Llamar a OpenRouter para diagnóstico
-        client = get_openrouter_client()
+        # Llamar a Gemini para diagnóstico
+        client = get_gemini_client()
         resultado = client.generar_diagnostico(solicitud.descripcion, vehiculo_info)
 
         if resultado["success"]:
