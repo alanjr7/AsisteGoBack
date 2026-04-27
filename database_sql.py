@@ -423,29 +423,30 @@ def migrate_taller_columns():
             db.commit()
             print("✅ Columna foto agregada a talleres")
         
-        # Crear taller por defecto si no existe
-        check_taller = text("SELECT COUNT(*) FROM talleres WHERE id = 'taller-default-001'")
-        taller_count = db.execute(check_taller).scalar()
-        
-        if taller_count == 0:
-            print("📋 Creando taller por defecto...")
-            db.execute(text("""
-                INSERT INTO talleres (id, nombre, email, created_at, updated_at)
-                VALUES ('taller-default-001', 'Taller Principal', 'taller@asistego.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            """))
-            db.commit()
-            print("✅ Taller por defecto creado")
-        
-        # Asignar datos existentes al taller por defecto
-        for table_name in ['users', 'solicitudes', 'personal', 'repuestos']:
-            update_query = text(f"""
-                UPDATE {table_name} 
-                SET taller_id = 'taller-default-001' 
-                WHERE taller_id IS NULL
-            """)
-            db.execute(update_query)
-            db.commit()
-            print(f"✅ Datos de {table_name} asignados al taller por defecto")
+        # Crear taller por defecto si no existe - DESHABILITADO
+        # Se permite que los usuarios creen sus propios talleres manualmente
+        # check_taller = text("SELECT COUNT(*) FROM talleres WHERE id = 'taller-default-001'")
+        # taller_count = db.execute(check_taller).scalar()
+        #
+        # if taller_count == 0:
+        #     print("📋 Creando taller por defecto...")
+        #     db.execute(text("""
+        #         INSERT INTO talleres (id, nombre, email, created_at, updated_at)
+        #         VALUES ('taller-default-001', 'Taller Principal', 'taller@asistego.com', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        #     """))
+        #     db.commit()
+        #     print("✅ Taller por defecto creado")
+        #
+        # # Asignar datos existentes al taller por defecto
+        # for table_name in ['users', 'solicitudes', 'personal', 'repuestos']:
+        #     update_query = text(f"""
+        #         UPDATE {table_name}
+        #         SET taller_id = 'taller-default-001'
+        #         WHERE taller_id IS NULL
+        #     """)
+        #     db.execute(update_query)
+        #     db.commit()
+        #     print(f"✅ Datos de {table_name} asignados al taller por defecto")
             
         print("✅ Migración completada")
         
