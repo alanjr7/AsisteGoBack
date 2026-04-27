@@ -36,6 +36,7 @@ def _repuesto_to_dict(r: RepuestoDB) -> dict:
         "stock": r.stock,
         "stock_minimo": r.stock_minimo,
         "taller_id": r.taller_id,
+        "taller_nombre": r.taller.nombre if r.taller else "Taller Desconocido",
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }
@@ -50,13 +51,24 @@ def listar_repuestos(
     db: Session = Depends(get_db),
     authorization: str = Header(None)
 ):
-    """Listar repuestos del taller del usuario autenticado."""
-    taller_id = get_current_taller_id(authorization)
+    """Listar repuestos. Los talleres ven solo lo suyo, los clientes ven todo."""
+    taller_id = None
+    tipo_usuario = None
+    
+    if authorization:
+        try:
+            token = authorization.replace("Bearer ", "")
+            payload = decode_access_token(token)
+            if payload:
+                taller_id = payload.get("taller_id")
+                tipo_usuario = payload.get("tipo_usuario")
+        except:
+            pass
     
     query = db.query(RepuestoDB)
     
-    # Filtrar por taller del usuario
-    if taller_id:
+    # Filtrado por taller: solo si el usuario es de tipo 'taller'
+    if tipo_usuario == "taller" and taller_id:
         query = query.filter(RepuestoDB.taller_id == taller_id)
     
     if categoria:
@@ -75,8 +87,7 @@ def listar_repuestos(
             func.lower(RepuestoDB.descripcion).like(q_lower)
         )
     
-    repuestos = query.all()
-    return [_repuesto_to_dict(r) for r in repuestos]
+    return [_repuesto_to_dict(r) for r in query.all()]
 
 
 @router.get("/{repuesto_id}", response_model=Repuesto)

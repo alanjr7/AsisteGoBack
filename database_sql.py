@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
+from utils.timezone import get_now
 from dotenv import load_dotenv
 import os
 import enum
@@ -79,8 +80,8 @@ class Taller(Base):
     descripcion = Column(Text, nullable=True)
     calificacion = Column(Float, default=0.0)
     total_servicios = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
 
 
 class Cliente(Base):
@@ -96,8 +97,8 @@ class Cliente(Base):
     lng = Column(Float, default=0.0)
     veces_atendido = Column(Integer, default=0)
     calificacion_promedio = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
 
 
 class Solicitud(Base):
@@ -123,6 +124,8 @@ class Solicitud(Base):
     estado = Column(Enum(EstadoSolicitud), default=EstadoSolicitud.PENDIENTE)
     requiere_repuestos = Column(Boolean, default=False)
     tipo = Column(Enum(TipoSolicitud), default=TipoSolicitud.NORMAL)
+    lat = Column(Float, nullable=True)
+    lng = Column(Float, nullable=True)
     
     # Estado de pago
     estado_pago = Column(String(20), default="pendiente")  # pendiente, confirmado, completado, cancelado
@@ -135,9 +138,12 @@ class Solicitud(Base):
     # Asignación
     mecanico_asignado_id = Column(String(36), nullable=True)
 
+    # Análisis IA
+    analisis_ia = Column(Text, nullable=True)  # JSON con análisis de IA
+
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
 
     # Relaciones
     cliente = relationship("Cliente")
@@ -155,8 +161,13 @@ class User(Base):
     rol = Column(String(50), default="encargado")
     tipo_usuario = Column(String(50), default="taller")  # "taller" o "cliente"
     taller_id = Column(String(36), ForeignKey("talleres.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    intentos_fallidos = Column(Integer, default=0, nullable=False)
+    bloqueado_hasta = Column(DateTime, nullable=True)
+    # Campos para recuperación de contraseña
+    temp_password_hash = Column(String(255), nullable=True)
+    temp_password_expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
     
     # Relación
     taller = relationship("Taller")
@@ -181,8 +192,8 @@ class Factura(Base):
     enviada = Column(Boolean, default=False)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
     
     # Relaciones
     cliente = relationship("Cliente")
@@ -204,8 +215,8 @@ class Personal(Base):
     taller_id = Column(String(36), ForeignKey("talleres.id"), nullable=True)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
     
     # Relación
     taller = relationship("Taller")
@@ -226,8 +237,8 @@ class Vehiculo(Base):
     activo = Column(Boolean, default=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
 
     # Relación
     cliente = relationship("Cliente")
@@ -251,8 +262,8 @@ class Repuesto(Base):
     taller_id = Column(String(36), ForeignKey("talleres.id"), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_now)
+    updated_at = Column(DateTime, default=get_now, onupdate=get_now)
     
     # Relación
     taller = relationship("Taller")
@@ -266,7 +277,7 @@ class SolicitudPersonal(Base):
     solicitud_id = Column(String(36), ForeignKey("solicitudes.id"), nullable=False)
     personal_id = Column(String(36), ForeignKey("personal.id"), nullable=False)
     rol_asignado = Column(String(50), nullable=False)
-    fecha_asignacion = Column(DateTime, default=datetime.utcnow)
+    fecha_asignacion = Column(DateTime, default=get_now)
     fecha_liberacion = Column(DateTime, nullable=True)
 
     # Relaciones
@@ -337,6 +348,24 @@ def migrate_taller_columns():
             column_exists = db.execute(check_column).scalar()
             
             if not column_exists:
+                print(f"📋 Agregando columna {column_name} a tabla {table_name}...")
+                db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
+                db.commit()
+                print(f"✅ Columna {column_name} agregada a {table_name}")
+                
+        # Columnas de bloqueo de usuario
+        auth_columns = [
+            ('users', 'intentos_fallidos', 'INTEGER DEFAULT 0 NOT NULL'),
+            ('users', 'bloqueado_hasta', 'TIMESTAMP NULL'),
+        ]
+        for table_name, column_name, column_type in auth_columns:
+            check_col = text(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.columns 
+                    WHERE table_name = '{table_name}' AND column_name = '{column_name}'
+                );
+            """)
+            if not db.execute(check_col).scalar():
                 print(f"📋 Agregando columna {column_name} a tabla {table_name}...")
                 db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
                 db.commit()
@@ -418,135 +447,104 @@ def migrate_taller_columns():
         db.close()
 
 
+def migrate_analisis_ia_column():
+    """Migrar columna analisis_ia si no existe en la tabla solicitudes."""
+    from sqlalchemy import text
+    
+    db = SessionLocal()
+    try:
+        # Verificar si la columna analisis_ia existe
+        check_column = text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.columns 
+                WHERE table_name = 'solicitudes' AND column_name = 'analisis_ia'
+            );
+        """)
+        
+        if not db.execute(check_column).scalar():
+            print("📋 Agregando columna analisis_ia a tabla solicitudes...")
+            db.execute(text("ALTER TABLE solicitudes ADD COLUMN analisis_ia TEXT"))
+            db.commit()
+            print("✅ Columna analisis_ia agregada a solicitudes")
+        else:
+            print("✅ Columna analisis_ia ya existe en solicitudes")
+        
+    except Exception as e:
+        print(f"❌ Error migrando columna analisis_ia: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def migrate_temp_password_columns():
+    """Migrar columnas para recuperación de contraseña si no existen."""
+    from sqlalchemy import text
+    
+    db = SessionLocal()
+    try:
+        # Columnas para recuperación de contraseña
+        temp_password_columns = [
+            ('users', 'temp_password_hash', 'VARCHAR(255) NULL'),
+            ('users', 'temp_password_expires_at', 'TIMESTAMP NULL'),
+        ]
+        
+        for table_name, column_name, column_type in temp_password_columns:
+            check_column = text(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.columns 
+                    WHERE table_name = '{table_name}' AND column_name = '{column_name}'
+                );
+            """)
+            column_exists = db.execute(check_column).scalar()
+            
+            if not column_exists:
+                print(f"📋 Agregando columna {column_name} a tabla {table_name}...")
+                db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
+                db.commit()
+                print(f"✅ Columna {column_name} agregada a {table_name}")
+            else:
+                print(f"✅ Columna {column_name} ya existe en {table_name}")
+        
+    except Exception as e:
+        print(f"❌ Error migrando columnas de recuperación de contraseña: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 def create_tables():
     """Crear todas las tablas y migrar columnas."""
     Base.metadata.create_all(bind=engine)
     migrate_taller_columns()
+    migrate_analisis_ia_column()
+    migrate_temp_password_columns()
 
 
 def init_mock_data():
     """Inicializar datos de prueba en PostgreSQL."""
     db = SessionLocal()
     try:
-        # Verificar si ya hay clientes
-        existing = db.query(Cliente).first()
-        if existing:
-            return  # Datos ya inicializados
+        # Crear usuario administrador si no existe
+        from utils.security import hash_password
+        admin_user = db.query(User).filter(User.email == "admin@gmail.com").first()
+        if not admin_user:
+            admin_user = User(
+                email="admin@gmail.com",
+                nombre="Administrador",
+                password_hash=hash_password("admin123"),
+                rol="administrador",
+                tipo_usuario="administrador",
+                taller_id=None
+            )
+            db.add(admin_user)
+            db.commit()
+            print("✅ Usuario admin creado: admin@gmail.com / admin123")
+        else:
+            print("ℹ️ Usuario admin ya existe")
 
-        # Crear clientes de prueba
-        from uuid import uuid4
-        clientes_mock = [
-            Cliente(
-                id=str(uuid4()),
-                nombre="Carlos Mendoza",
-                telefono="+591 7123 4567",
-                email="carlos@demo.com",
-                foto="https://i.pravatar.cc/150?img=12",
-                lat=-17.7856,
-                lng=-63.1789,
-                veces_atendido=0,
-            ),
-            Cliente(
-                id=str(uuid4()),
-                nombre="María González",
-                telefono="+591 7234 5678",
-                email="maria@demo.com",
-                foto="https://i.pravatar.cc/150?img=5",
-                lat=-17.7801,
-                lng=-63.1845,
-                veces_atendido=0,
-            ),
-        ]
-        for c in clientes_mock:
-            db.add(c)
-
-        # Crear personal de prueba
-        personal_mock = [
-            Personal(
-                id=str(uuid4()),
-                nombre="José Martínez",
-                rol="mecanico",
-                estado="disponible",
-                foto="https://i.pravatar.cc/150?img=13",
-                telefono="+591 7111 2222",
-                asistencias_dia=3,
-                asistencias_mes=45,
-            ),
-            Personal(
-                id=str(uuid4()),
-                nombre="Alexis Rojas",
-                rol="electrico",
-                estado="disponible",
-                foto="https://i.pravatar.cc/150?img=14",
-                telefono="+591 7222 3333",
-                asistencias_dia=2,
-                asistencias_mes=38,
-            ),
-            Personal(
-                id=str(uuid4()),
-                nombre="Mario Sánchez",
-                rol="grua",
-                estado="disponible",
-                foto="https://i.pravatar.cc/150?img=15",
-                telefono="+591 7333 4444",
-                asistencias_dia=1,
-                asistencias_mes=22,
-            ),
-            Personal(
-                id=str(uuid4()),
-                nombre="Oscar López",
-                rol="mecanico",
-                estado="disponible",
-                foto="https://i.pravatar.cc/150?img=16",
-                telefono="+591 7444 5555",
-                asistencias_dia=4,
-                asistencias_mes=52,
-            ),
-        ]
-        for p in personal_mock:
-            db.add(p)
-
-        # Crear vehículos de prueba para clientes
-        vehiculos_mock = [
-            Vehiculo(
-                id=str(uuid4()),
-                cliente_id=clientes_mock[0].id,
-                marca="Toyota",
-                modelo="Corolla",
-                anio=2020,
-                placa="ABC123",
-                color="Blanco",
-                tipo="Sedán",
-                activo=True,
-            ),
-            Vehiculo(
-                id=str(uuid4()),
-                cliente_id=clientes_mock[0].id,
-                marca="Honda",
-                modelo="Civic",
-                anio=2019,
-                placa="XYZ789",
-                color="Negro",
-                tipo="Sedán",
-                activo=False,
-            ),
-            Vehiculo(
-                id=str(uuid4()),
-                cliente_id=clientes_mock[1].id,
-                marca="Ford",
-                modelo="Ranger",
-                anio=2021,
-                placa="DEF456",
-                color="Azul",
-                tipo="Camioneta",
-                activo=True,
-            ),
-        ]
-        for v in vehiculos_mock:
-            db.add(v)
-
-        db.commit()
-        print("✅ Datos de prueba creados en PostgreSQL")
+        # No crear datos de prueba (clientes, personal, vehículos)
+        # para mostrar solo datos reales en el dashboard
+        print("ℹ️ Datos de prueba deshabilitados - usando solo datos reales")
     except Exception as e:
         print(f"⚠️ Error creando datos de prueba: {e}")
         db.rollback()

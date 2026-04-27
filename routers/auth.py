@@ -1,21 +1,32 @@
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, HTTPException, Header, Depends, Request
 from sqlalchemy.orm import Session
 import uuid
+import math
+import secrets
+import string
+from datetime import datetime, timedelta
+from utils.timezone import get_now
 from models import (
     LoginRequest, LoginResponse, RegisterRequest, RegisterResponse,
-    ChangePasswordRequest, ChangePasswordResponse
+    ChangePasswordRequest, ChangePasswordResponse,
+    ForgotPasswordRequest, ForgotPasswordResponse,
+    ResetPasswordRequest, ResetPasswordResponse
 )
 from database_sql import get_db, User, Cliente, Taller
 from database import db as memory_db
 from utils.security import (
     hash_password, verify_password, create_access_token, decode_access_token
 )
+from utils.email_service import email_service
+from utils.rate_limiter import limiter
 
 router = APIRouter()
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 def login(
+    request: Request,
     credentials: LoginRequest,
     db: Session = Depends(get_db),
     x_platform: str = Header("web", alias="X-Platform")
@@ -24,16 +35,65 @@ def login(
     # Buscar usuario en PostgreSQL
     user = db.query(User).filter(User.email == credentials.email).first()
     
-    if not user or not verify_password(credentials.password, user.password_hash):
+    if not user:
         raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
+
+    # 1. Validar si está bloqueado
+    if user.bloqueado_hasta and user.bloqueado_hasta > get_now():
+        tiempo_restante = (user.bloqueado_hasta - get_now()).total_seconds()
+        minutos_restantes = math.ceil(tiempo_restante / 60)
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": f"Cuenta suspendida. Intente de nuevo en {minutos_restantes} minutos.",
+                "minutos_restantes": minutos_restantes,
+                "is_locked": True
+            }
+        )
+    
+    # 2. Validar contraseña (normal o temporal)
+    password_valid = verify_password(credentials.password, user.password_hash)
+    
+    # Si la contraseña normal no es válida, verificar la temporal
+    if not password_valid and user.temp_password_hash:
+        if user.temp_password_expires_at and user.temp_password_expires_at > get_now():
+            password_valid = verify_password(credentials.password, user.temp_password_hash)
+    
+    if not password_valid:
+        user.intentos_fallidos += 1
+        db.commit()
+
+        if user.intentos_fallidos >= 5:
+            user.bloqueado_hasta = get_now() + timedelta(minutes=10)
+            db.commit()
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Cuenta suspendida por múltiples intentos fallidos. Intente de nuevo en 10 minutos.",
+                    "minutos_restantes": 10,
+                    "is_locked": True
+                }
+            )
+            
+        intentos_restantes = 5 - user.intentos_fallidos
+        raise HTTPException(
+            status_code=401, 
+            detail=f"Email o contraseña incorrectos. Le quedan {intentos_restantes} intento(s)."
+        )
+
+    # 3. Contraseña correcta: Resetear valores
+    if user.intentos_fallidos > 0 or user.bloqueado_hasta:
+        user.intentos_fallidos = 0
+        user.bloqueado_hasta = None
+        db.commit()
     
     # Validar que el tipo de usuario corresponde a la plataforma
-    if x_platform == "web" and user.tipo_usuario != "taller":
+    if x_platform == "web" and user.tipo_usuario not in ["taller", "administrador"]:
         raise HTTPException(
             status_code=403,
             detail="Los clientes solo pueden iniciar sesión en la app móvil"
         )
-    
+
     if x_platform == "mobile" and user.tipo_usuario != "cliente":
         raise HTTPException(
             status_code=403,
@@ -254,6 +314,7 @@ def get_current_user(authorization: str = Header(None), db: Session = Depends(ge
         raise HTTPException(status_code=401, detail="Usuario no encontrado")
     
     return {
+        "id": user.id,
         "email": user.email,
         "nombre": user.nombre,
         "rol": user.rol,
@@ -296,6 +357,75 @@ def change_password(
     db.commit()
     
     return ChangePasswordResponse(
+        success=True,
+        message="Contraseña actualizada exitosamente"
+    )
+
+
+def generate_temp_password(length: int = 8) -> str:
+    """Generar contraseña temporal aleatoria."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """Enviar contraseña temporal al correo del usuario."""
+    user = db.query(User).filter(User.email == data.email).first()
+    
+    if not user:
+        # Por seguridad, no revelamos si el email existe
+        return ForgotPasswordResponse(
+            success=True,
+            message="Si el email está registrado, recibirás un correo con instrucciones"
+        )
+    
+    # Generar contraseña temporal
+    temp_password = generate_temp_password()
+    temp_password_hash = hash_password(temp_password)
+    expires_at = get_now() + timedelta(hours=24)
+    
+    # Guardar contraseña temporal
+    user.temp_password_hash = temp_password_hash
+    user.temp_password_expires_at = expires_at
+    db.commit()
+    
+    # Enviar correo
+    email_service.send_temp_password(user.email, temp_password, user.nombre)
+    
+    return ForgotPasswordResponse(
+        success=True,
+        message="Si el email está registrado, recibirás un correo con instrucciones"
+    )
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """Restablecer contraseña usando la contraseña temporal."""
+    user = db.query(User).filter(User.email == data.email).first()
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="Email no encontrado")
+    
+    # Verificar que tiene contraseña temporal
+    if not user.temp_password_hash or not user.temp_password_expires_at:
+        raise HTTPException(status_code=400, detail="No hay solicitud de recuperación activa")
+    
+    # Verificar que no ha expirado
+    if user.temp_password_expires_at < get_now():
+        raise HTTPException(status_code=400, detail="La contraseña temporal ha expirado")
+    
+    # Verificar contraseña temporal
+    if not verify_password(data.temp_password, user.temp_password_hash):
+        raise HTTPException(status_code=400, detail="Contraseña temporal incorrecta")
+    
+    # Actualizar contraseña
+    user.password_hash = hash_password(data.new_password)
+    user.temp_password_hash = None
+    user.temp_password_expires_at = None
+    db.commit()
+    
+    return ResetPasswordResponse(
         success=True,
         message="Contraseña actualizada exitosamente"
     )

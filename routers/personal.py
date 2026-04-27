@@ -4,8 +4,10 @@ from models import Personal, PersonalCreate, PersonalUpdate, EstadoPersonal
 from database_sql import get_db, Personal as PersonalDB
 from sqlalchemy.orm import Session
 from datetime import datetime
+from utils.timezone import get_now
 import uuid
 from utils.security import get_taller_id_from_token
+from utils.supabase_storage import ensure_full_url
 
 router = APIRouter()
 
@@ -25,7 +27,7 @@ def _personal_to_dict(p: PersonalDB) -> dict:
         "nombre": p.nombre,
         "rol": p.rol,
         "estado": p.estado,
-        "foto": p.foto,
+        "foto": ensure_full_url(p.foto),
         "telefono": p.telefono,
         "asistencias_dia": p.asistencias_dia or 0,
         "asistencias_mes": p.asistencias_mes or 0,
@@ -111,7 +113,7 @@ def actualizar_personal(personal_id: str, empleado: PersonalUpdate, db: Session 
         if hasattr(existing, key):
             setattr(existing, key, value)
 
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = get_now()
     db.commit()
     db.refresh(existing)
     return _personal_to_dict(existing)
@@ -125,7 +127,7 @@ def cambiar_estado_personal(personal_id: str, estado: str, db: Session = Depends
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
 
     existing.estado = estado
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = get_now()
     db.commit()
     db.refresh(existing)
     return _personal_to_dict(existing)

@@ -11,6 +11,7 @@ from models import (
 from database_sql import get_db, Solicitud, Cliente, Factura as FacturaDB
 from sqlalchemy.orm import Session
 from datetime import datetime
+from utils.timezone import get_now
 import uuid
 from utils.security import get_taller_id_from_token
 
@@ -36,22 +37,37 @@ def _calcular_total(monto: float) -> tuple[float, float]:
 
 
 @router.post("/confirmar", response_model=dict)
-async def confirmar_pago(data: ConfirmarPagoRequest, db: Session = Depends(get_db)):
+async def confirmar_pago(
+    data: ConfirmarPagoRequest, 
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
     """
     El taller confirma el monto a cobrar por un servicio.
     Esto notifica al cliente que puede proceder al pago.
     """
     print(f"[PAGOS] 📤 Confirmando pago para solicitud {data.solicitud_id}, monto: {data.monto}")
     
-    # Validar que la solicitud existe
+    # 1. Validar autenticación de taller
+    taller_id = get_current_taller_id(authorization)
+    if not taller_id:
+        print("[PAGOS] ❌ Error de autenticación: No hay taller_id en el token")
+        raise HTTPException(status_code=401, detail="No autorizado. Inicie sesión como taller.")
+
+    # 2. Validar que la solicitud existe
     solicitud = db.query(Solicitud).filter(Solicitud.id == data.solicitud_id).first()
     if not solicitud:
         print(f"[PAGOS] ❌ Solicitud no encontrada: {data.solicitud_id}")
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     
+    # 3. Validar que la solicitud pertenece a este taller
+    if solicitud.taller_id != taller_id:
+        print(f"[PAGOS] ❌ Conflicto de taller: Solicitud pertenece a {solicitud.taller_id}, usuario es {taller_id}")
+        raise HTTPException(status_code=403, detail="No tiene permiso para gestionar esta solicitud")
+
     print(f"[PAGOS] ✅ Solicitud encontrada, estado: {solicitud.estado.value}, estado_pago: {solicitud.estado_pago}")
     
-    # Validar que la solicitud está finalizada
+    # 4. Validar que la solicitud está finalizada
     if solicitud.estado.value != "finalizada":
         print(f"[PAGOS] ❌ Solicitud no está finalizada: {solicitud.estado.value}")
         raise HTTPException(
@@ -71,7 +87,7 @@ async def confirmar_pago(data: ConfirmarPagoRequest, db: Session = Depends(get_d
     # Actualizar solicitud con estado de pago
     solicitud.estado_pago = "confirmado"
     solicitud.monto_pago = data.monto
-    solicitud.updated_at = datetime.utcnow()
+    solicitud.updated_at = get_now()
     
     db.commit()
     db.refresh(solicitud)
@@ -189,7 +205,7 @@ async def procesar_pago(data: ProcesarPagoRequest, db: Session = Depends(get_db)
     
     # Actualizar estado de pago de la solicitud
     solicitud.estado_pago = "completado"
-    solicitud.updated_at = datetime.utcnow()
+    solicitud.updated_at = get_now()
     
     db.commit()
     db.refresh(nueva_factura)

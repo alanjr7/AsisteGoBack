@@ -1,5 +1,6 @@
 """Utilidades de seguridad: hashing de contraseñas y JWT tokens."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from utils.timezone import get_now
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
@@ -36,10 +37,15 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
     """Crear un token JWT de acceso."""
     to_encode = data.copy()
     
+    # IMPORTANTE: JWT expira en UTC. No usar local time de Bolivia (get_now()) aquí
+    # ya que jose.jwt interpreta naive datetimes como UTC, lo que causa expiración inmediata
+    # si el servidor está en una zona horaria distinta (como Bolivia GMT-4).
+    now_utc = datetime.now(timezone.utc)
+    
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = now_utc + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = now_utc + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)

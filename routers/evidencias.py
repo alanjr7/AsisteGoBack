@@ -4,6 +4,7 @@ Router para gestión de evidencias (fotos y audios) vinculadas a solicitudes.
 from fastapi import APIRouter, HTTPException, Header
 from typing import List, Optional
 from datetime import datetime
+from utils.timezone import get_now
 from database import db
 from models import Evidencia, EvidenciaCreate, TipoEvidencia
 
@@ -62,7 +63,7 @@ def crear_evidencia(
     
     # Crear la evidencia
     evidencia_data = data.model_dump()
-    evidencia_data["timestamp"] = datetime.now()
+    evidencia_data["timestamp"] = get_now()
     
     evidencia = db.create("evidencias", evidencia_data)
     

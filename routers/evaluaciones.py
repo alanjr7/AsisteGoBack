@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import Optional, List
 from datetime import datetime
+from utils.timezone import get_now
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import uuid
@@ -64,7 +65,7 @@ class EvaluacionDB:
         evaluacion = {
             "id": eval_id,
             **data,
-            "fecha_evaluacion": datetime.utcnow().isoformat(),
+            "fecha_evaluacion": get_now().isoformat(),
             "estado": "pendiente"
         }
         self.evaluaciones[eval_id] = evaluacion

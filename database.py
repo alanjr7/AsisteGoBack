@@ -4,6 +4,7 @@ En producción, reemplazar con SQLAlchemy y PostgreSQL/MySQL.
 """
 from typing import Dict, List, Optional
 from datetime import datetime
+from utils.timezone import get_now
 import uuid
 
 
@@ -101,7 +102,7 @@ class InMemoryDB:
         notif_mock = [
             {"id": "n1", "tipo": "solicitud", "titulo": "Nueva solicitud", 
              "mensaje": "Carlos Mendoza necesita asistencia", "leida": False,
-             "timestamp": datetime.now().isoformat()},
+             "timestamp": get_now().isoformat()},
         ]
         for n in notif_mock:
             self.notificaciones[n["id"]] = n
@@ -129,7 +130,7 @@ class InMemoryDB:
         if "id" not in data:
             data["id"] = self.generate_id()
         if "timestamp" not in data and table != "clientes":
-            data["timestamp"] = datetime.now().isoformat()
+            data["timestamp"] = get_now().isoformat()
         
         db_table = getattr(self, table)
         if isinstance(db_table, dict):

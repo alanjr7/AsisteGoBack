@@ -2,18 +2,36 @@
 Router para manejo de archivos: evidencias (fotos, audios) y comprobantes de pago.
 Almacenamiento local en directorio uploads/.
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, Request
 from fastapi.responses import FileResponse
 from typing import Optional
 import os
 import shutil
 from datetime import datetime
+from utils.timezone import get_now
 import uuid
 import traceback
 
+# Importar servicio de Supabase
+try:
+    from utils.supabase_storage import (
+        upload_image,
+        upload_audio,
+        upload_profile,
+        upload_comprobante_to_supabase,
+        delete_file_from_supabase,
+        is_supabase_url,
+        extract_file_path_from_url,
+        generate_unique_filename
+    )
+    SUPABASE_STORAGE_AVAILABLE = True
+except ImportError as e:
+    print(f"[UPLOAD] Advertencia: No se pudo importar supabase_storage: {e}")
+    SUPABASE_STORAGE_AVAILABLE = False
+
 # Importaciones para foto de perfil
 try:
-    from database_sql import get_db, Taller
+    from database_sql import get_db, Taller, Cliente
     from utils.security import decode_access_token
 except ImportError as e:
     print(f"[UPLOAD] Advertencia: No se pudieron importar dependencias de BD: {e}")
@@ -43,12 +61,6 @@ ALLOWED_PDF_TYPES = {"application/pdf"}
 MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
-def generate_unique_filename(original_filename: str) -> str:
-    """Genera un nombre de archivo único con timestamp y UUID."""
-    ext = os.path.splitext(original_filename)[1].lower()
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    unique_id = str(uuid.uuid4())[:8]
-    return f"{timestamp}_{unique_id}{ext}"
 
 
 def validate_file(file: UploadFile, allowed_types: set, max_size: int = MAX_FILE_SIZE) -> None:
@@ -73,37 +85,36 @@ def validate_file(file: UploadFile, allowed_types: set, max_size: int = MAX_FILE
 
 
 @router.post("/image")
-async def upload_image(
+async def upload_image_endpoint(
     file: UploadFile = File(...),
     descripcion: Optional[str] = Form(None),
     authorization: Optional[str] = Header(None)
 ):
     """
-    Subir una imagen (foto de evidencia).
+    Subir una imagen (foto de evidencia) a Supabase Storage.
     Retorna la URL del archivo subido.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="No autorizado")
     
+    if not SUPABASE_STORAGE_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Supabase Storage no está configurado")
+    
     try:
         validate_file(file, ALLOWED_IMAGE_TYPES)
         
+        file_content = await file.read()
         filename = generate_unique_filename(file.filename or "image.jpg")
-        file_path = os.path.join(IMAGES_DIR, filename)
         
-        # Guardar archivo
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # URL relativa para acceder al archivo
-        url = f"/uploads/images/{filename}"
+        url = await upload_image(file_content, filename)
         
         return {
             "success": True,
             "url": url,
             "filename": filename,
             "tipo": "imagen",
-            "descripcion": descripcion
+            "descripcion": descripcion,
+            "storage": "supabase"
         }
     
     except HTTPException:
@@ -113,36 +124,36 @@ async def upload_image(
 
 
 @router.post("/audio")
-async def upload_audio(
+async def upload_audio_endpoint(
     file: UploadFile = File(...),
     descripcion: Optional[str] = Form(None),
     authorization: Optional[str] = Header(None)
 ):
     """
-    Subir un archivo de audio (grabación de evidencia).
+    Subir un archivo de audio (grabación de evidencia) a Supabase Storage.
     Retorna la URL del archivo subido.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="No autorizado")
     
+    if not SUPABASE_STORAGE_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Supabase Storage no está configurado")
+    
     try:
         validate_file(file, ALLOWED_AUDIO_TYPES)
         
+        file_content = await file.read()
         filename = generate_unique_filename(file.filename or "audio.mp3")
-        file_path = os.path.join(AUDIO_DIR, filename)
         
-        # Guardar archivo
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        url = f"/uploads/audio/{filename}"
+        url = await upload_audio(file_content, filename)
         
         return {
             "success": True,
             "url": url,
             "filename": filename,
             "tipo": "audio",
-            "descripcion": descripcion
+            "descripcion": descripcion,
+            "storage": "supabase"
         }
     
     except HTTPException:
@@ -158,31 +169,32 @@ async def upload_comprobante(
     authorization: Optional[str] = Header(None)
 ):
     """
-    Subir un comprobante de pago (imagen o PDF).
+    Subir un comprobante de pago (imagen o PDF) a Supabase Storage.
     Retorna la URL del archivo subido.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="No autorizado")
     
+    if not SUPABASE_STORAGE_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Supabase Storage no está configurado")
+    
     try:
         allowed_types = ALLOWED_IMAGE_TYPES | ALLOWED_PDF_TYPES
         validate_file(file, allowed_types)
         
-        filename = generate_unique_filename(file.filename or "comprobante.jpg")
-        file_path = os.path.join(COMPROBANTES_DIR, filename)
+        file_content = await file.read()
+        filename = generate_unique_filename(file.filename or "comprobante.pdf")
         
-        # Guardar archivo
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        url = f"/uploads/comprobantes/{filename}"
+        content_type = file.content_type or "application/pdf"
+        url = await upload_comprobante_to_supabase(file_content, filename, content_type)
         
         return {
             "success": True,
             "url": url,
             "filename": filename,
             "solicitud_id": solicitud_id,
-            "tipo": "comprobante"
+            "tipo": "comprobante",
+            "storage": "supabase"
         }
     
     except HTTPException:
@@ -243,8 +255,17 @@ async def delete_file(
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     
     try:
-        os.remove(file_path)
-        return {"success": True, "message": "Archivo eliminado"}
+        # Verificar si es una URL de Supabase
+        # Para simplificar, asumimos que si el archivo existe localmente, lo eliminamos localmente
+        # Si no existe localmente pero es una URL de Supabase, intentamos eliminar de Supabase
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return {"success": True, "message": "Archivo eliminado (local)"}
+        else:
+            # Intentar eliminar de Supabase si la URL parece ser de Supabase
+            # Nota: Este endpoint necesita la URL completa, no solo el filename
+            # Por ahora, solo soportamos eliminación local
+            return {"success": True, "message": "Archivo no encontrado localmente (puede estar en Supabase)"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar: {str(e)}")
 
@@ -252,90 +273,86 @@ async def delete_file(
 # ==================== FOTO DE PERFIL ====================
 
 @router.put("/taller/perfil/foto")
-async def update_profile_photo(
+async def update_taller_profile_photo(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None)
 ):
-    """
-    Actualizar foto de perfil del taller.
-    Requiere token de autorización.
-    Retorna la URL de la nueva foto.
-    """
+    """Actualizar foto de perfil del taller en Supabase Storage."""
+    return await _update_any_profile_photo(file, authorization, "taller")
+
+@router.put("/cliente/perfil/foto")
+async def update_cliente_profile_photo(
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(None)
+):
+    """Actualizar foto de perfil del cliente en Supabase Storage."""
+    return await _update_any_profile_photo(file, authorization, "cliente")
+
+async def _update_any_profile_photo(file: UploadFile, authorization: Optional[str], user_type: str):
+    """Lógica común para actualizar foto de perfil (taller o cliente)."""
     if not authorization:
         raise HTTPException(status_code=401, detail="No autorizado")
     
-    # Verificar que las importaciones estén disponibles
-    if not all([get_db, Taller, decode_access_token]):
-        raise HTTPException(status_code=500, detail="Error de configuración del servidor: dependencias no disponibles")
+    if not SUPABASE_STORAGE_AVAILABLE:
+        raise HTTPException(status_code=500, detail="Supabase Storage no está configurado")
+    
+    if not all([get_db, Taller, Cliente, decode_access_token]):
+        raise HTTPException(status_code=500, detail="Error de configuración del servidor")
     
     try:
-        # Decodificar token para obtener taller_id
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Formato de token inválido")
+        
         token = authorization.replace("Bearer ", "")
         payload = decode_access_token(token)
         
         if not payload:
+            raise HTTPException(status_code=401, detail="Token inválido o expirado")
+        
+        email = payload.get("sub")
+        if not email:
             raise HTTPException(status_code=401, detail="Token inválido")
         
-        taller_id = payload.get("taller_id")
-        if not taller_id:
-            raise HTTPException(status_code=401, detail="No se encontró información del taller")
+        validate_file(file, ALLOWED_IMAGE_TYPES, max_size=5*1024*1024)
         
-        print(f"[UPLOAD] Actualizando foto para taller: {taller_id}")
-        
-        # Validar archivo
-        if file.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Tipo de imagen no permitido. Permitidos: JPEG, PNG, WEBP"
-            )
-        
-        # Validar tamaño (5MB máximo para perfiles)
-        file.file.seek(0, os.SEEK_END)
-        file_size = file.file.tell()
-        file.file.seek(0)
-        
-        if file_size > 5 * 1024 * 1024:  # 5MB
-            raise HTTPException(status_code=400, detail="La imagen no debe superar 5MB")
-        
-        # Generar nombre único con ID del taller
         ext = os.path.splitext(file.filename)[1].lower()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"perfil_{taller_id}_{timestamp}{ext}"
-        file_path = os.path.join(PERFILES_DIR, filename)
+        timestamp = get_now().strftime("%Y%m%d_%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"perfil_{user_type}_{unique_id}_{timestamp}{ext}"
         
-        print(f"[UPLOAD] Guardando archivo: {file_path}")
+        file_content = await file.read()
+        url = await upload_profile(file_content, filename)
         
-        # Guardar archivo
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # URL relativa
-        url = f"/uploads/perfiles/{filename}"
-        
-        print(f"[UPLOAD] Actualizando base de datos...")
-        
-        # Actualizar en base de datos
         db = next(get_db())
         try:
-            taller = db.query(Taller).filter(Taller.id == taller_id).first()
-            if not taller:
-                raise HTTPException(status_code=404, detail="Taller no encontrado")
+            entity = None
+            if user_type == "taller":
+                taller_id = payload.get("taller_id")
+                if not taller_id:
+                    raise HTTPException(status_code=401, detail="No se encontró taller_id en el token")
+                entity = db.query(Taller).filter(Taller.id == taller_id).first()
+            else:
+                entity = db.query(Cliente).filter(Cliente.email == email).first()
+            
+            if not entity:
+                raise HTTPException(status_code=404, detail=f"{user_type.capitalize()} no encontrado")
             
             # Eliminar foto anterior si existe
-            if taller.foto and taller.foto.startswith("/uploads/perfiles/"):
-                old_filename = taller.foto.replace("/uploads/perfiles/", "")
-                old_path = os.path.join(PERFILES_DIR, old_filename)
-                if os.path.exists(old_path):
-                    try:
-                        os.remove(old_path)
-                        print(f"[UPLOAD] Foto anterior eliminada: {old_path}")
-                    except Exception as e:
-                        print(f"[UPLOAD] No se pudo eliminar foto anterior: {e}")
+            if entity.foto:
+                if is_supabase_url(entity.foto):
+                    old_path = extract_file_path_from_url(entity.foto)
+                    if old_path:
+                        try:
+                            await delete_file_from_supabase(old_path)
+                        except: pass
+                elif entity.foto.startswith("/uploads/perfiles/"):
+                    old_path = os.path.join(PERFILES_DIR, entity.foto.split("/")[-1])
+                    if os.path.exists(old_path):
+                        try: os.remove(old_path)
+                        except: pass
             
-            # Actualizar con nueva foto
-            taller.foto = url
+            entity.foto = url
             db.commit()
-            print(f"[UPLOAD] Foto actualizada en BD: {url}")
             
         finally:
             db.close()
@@ -349,6 +366,5 @@ async def update_profile_photo(
     except HTTPException:
         raise
     except Exception as e:
-        error_detail = f"{str(e)}\n{traceback.format_exc()}"
-        print(f"[UPLOAD] ERROR: {error_detail}")
+        print(f"[UPLOAD] ERROR: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error al actualizar foto: {str(e)}")

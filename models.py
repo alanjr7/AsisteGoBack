@@ -110,7 +110,7 @@ class VehiculoBase(BaseModel):
     anio: int
     placa: str
     color: str
-    tipo: str
+    tipo: Optional[str] = "Sedán"
 
 
 class VehiculoCreate(VehiculoBase):
@@ -125,22 +125,35 @@ class Vehiculo(VehiculoBase):
 
 
 class AnalisisIA(BaseModel):
-    piezas_detectadas: Optional[List[str]] = None
-    danos_identificados: Optional[List[str]] = None
-    tipo_problema: Optional[str] = None
-    recomendaciones: Optional[List[str]] = None
+    transcripcion_audio: Optional[str] = Field(None, alias="transcripcionAudio")
+    tipo_problema: Optional[str] = Field(None, alias="tipoProblema")
+    prioridad: Optional[str] = None
+    daños_detectados: Optional[List[str]] = Field(None, alias="danosDetectados")
+    piezas_sugeridas: Optional[List[str]] = Field(None, alias="piezasSugeridas")
+    costo_estimado: Optional[float] = Field(None, alias="costoEstimado")
+    tiempo_estimado_minutos: Optional[int] = Field(None, alias="tiempoEstimadoMinutos")
+    resumen: Optional[str] = None
+    confianza: Optional[int] = None
+
+    class Config:
+        populate_by_name = True
 
 
 class SolicitudBase(BaseModel):
     descripcion: str
-    distancia: float
+    distancia: Optional[float] = 0.0
     estado: EstadoSolicitud = EstadoSolicitud.PENDIENTE
     problema: str
-    requiere_repuestos: bool
+    requiere_repuestos: Optional[bool] = False
     audio: Optional[str] = None
     imagenes: Optional[List[str]] = None
-    analisis_ia: Optional[AnalisisIA] = None
+    analisis_ia: Optional[AnalisisIA] = Field(None, alias="analisisIA")
     tipo: TipoSolicitud = TipoSolicitud.NORMAL
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+    class Config:
+        populate_by_name = True
 
 
 class SolicitudCreate(SolicitudBase):
@@ -190,9 +203,12 @@ class Solicitud(SolicitudBase):
     personal_asignado: Optional[List[PersonalAsignado]] = None  # Nuevo campo para múltiples técnicos
     estado_pago: Optional[EstadoPago] = EstadoPago.PENDIENTE
     monto_pago: Optional[float] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 
 class ConfirmarPagoRequest(BaseModel):
@@ -220,15 +236,15 @@ class EstadoPagoResponse(BaseModel):
 
 class RepuestoBase(BaseModel):
     nombre: str
-    descripcion: str
+    descripcion: Optional[str] = ""
     precio: float
     imagen: Optional[str] = None
     disponible: bool = True
-    marca: str
-    categoria: str
-    vehiculos_compatibles: List[str]
+    marca: Optional[str] = "Genérico"
+    categoria: Optional[str] = "Otros"
+    vehiculos_compatibles: Optional[List[str]] = []
     stock: int = 0
-    stock_minimo: int = 5
+    stock_minimo: Optional[int] = 5
 
 
 class RepuestoCreate(RepuestoBase):
@@ -251,6 +267,9 @@ class RepuestoUpdate(BaseModel):
 class Repuesto(RepuestoBase):
     id: str
     taller_id: Optional[str] = None
+    taller_nombre: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -514,6 +533,26 @@ class ChangePasswordRequest(BaseModel):
 
 
 class ChangePasswordResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ForgotPasswordResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    temp_password: str
+    new_password: str
+
+
+class ResetPasswordResponse(BaseModel):
     success: bool
     message: str
 

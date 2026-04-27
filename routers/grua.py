@@ -6,6 +6,7 @@ asignación automática por proximidad.
 from fastapi import APIRouter, HTTPException, Header
 from typing import List, Optional
 from datetime import datetime
+from utils.timezone import get_now
 import math
 from database import db
 from models import (
@@ -70,7 +71,7 @@ def actualizar_ubicacion(
         "gruista_id": gruista_id,
         "lat": data.lat,
         "lng": data.lng,
-        "timestamp": datetime.now(),
+        "timestamp": get_now(),
     }
     
     # Si se proporcionan campos opcionales, agregarlos
@@ -303,7 +304,7 @@ def liberar_grua(
         if solicitud and solicitud.get("estado") == "en_camino":
             db.update("solicitudes", solicitud_id, {
                 "estado": "finalizada",
-                "fecha_finalizacion": datetime.now()
+                "fecha_finalizacion": get_now()
             })
     
     return {

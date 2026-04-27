@@ -3,10 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
+# Cargar variables de entorno desde .env al inicio
+from dotenv import load_dotenv
+load_dotenv(override=True)
+print("[MAIN] Variables de entorno cargadas desde .env")
+
 # Importar routers
 from routers import auth, clientes, solicitudes, repuestos, solicitudes_repuesto
 from routers import servicios, notificaciones, personal, facturas, taller, chat, talleres
 from routers import upload, grua, evidencias, comprobantes, websocket, pagos, vehiculos, reportes, evaluaciones
+from routers import admin
 
 # Importar configuración de base de datos
 from database_sql import create_tables, get_db, User, init_mock_data
@@ -39,13 +45,19 @@ os.makedirs(os.path.join(UPLOAD_DIR, "perfiles"), exist_ok=True)
 # Servir archivos estáticos (imágenes, audios, comprobantes)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# Configurar CORS para producción (dominios específicos)
+#sql Configurar CORS para producción (dominios específicos)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://asistego-front.netlify.app",  # Frontend actual en Netlify
         "https://comforting-taiyaki-e1534c.netlify.app",  # Frontend anterior
-        "http://localhost:4200",  # Desarrollo local
+        "http://181.115.129.246",  # Dispositivo móvil IP
+        "https://189.28.71.142",
+        "http://181.115.129.246:8080",  # Dispositivo móvil IP con puerto
+        "http://localhost:4200",  # Desarrollo local Angular
+        "http://localhost:8080",  # Flutter web default
+        "http://localhost:5000",  # Flutter web alternativo
+        "http://localhost:3000",  # React/Vue dev server
     ],
     allow_credentials=True,  # Permitir cookies/tokens de autenticación
     allow_methods=["*"],
@@ -74,6 +86,7 @@ app.include_router(vehiculos.router, prefix="/vehiculos", tags=["Vehículos"])
 app.include_router(reportes.router, prefix="/reportes", tags=["Reportes"])
 app.include_router(evaluaciones.router, prefix="/evaluaciones", tags=["Evaluaciones"])
 app.include_router(websocket.router, prefix="/ws", tags=["WebSocket"])
+app.include_router(admin.router, tags=["Administración"])
 
 
 @app.get("/")
@@ -111,4 +124,4 @@ def startup_event():
     print("🚀 Iniciando Asistego API...")
     create_tables()
     print("✅ Tablas de base de datos verificadas/creadas")
-    init_mock_data()
+    # init_mock_data()  # Commented out to use only real data

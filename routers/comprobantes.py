@@ -4,6 +4,7 @@ Router para gestión de comprobantes de pago.
 from fastapi import APIRouter, HTTPException, Header
 from typing import List, Optional
 from datetime import datetime
+from utils.timezone import get_now
 from database import db
 from models import ComprobantePago, ComprobantePagoCreate, MetodoPago
 
@@ -56,7 +57,7 @@ def crear_comprobante(
     
     # Crear el comprobante
     comprobante_data = data.model_dump()
-    comprobante_data["timestamp"] = datetime.now()
+    comprobante_data["timestamp"] = get_now()
     
     comprobante = db.create("comprobantes_pago", comprobante_data)
     

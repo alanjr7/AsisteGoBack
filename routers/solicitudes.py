@@ -6,11 +6,13 @@ from database_sql import (
     get_db, Solicitud as SolicitudDB, Cliente, Personal, SolicitudPersonal, User,
     EstadoSolicitud as EstadoDB, TipoSolicitud as TipoDB
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
+from utils.timezone import get_now
 import uuid
 import json
 from utils.security import decode_access_token, get_taller_id_from_token
+from utils.supabase_storage import ensure_full_url
 
 # Importar funciones WebSocket
 from routers.websocket import (
@@ -37,23 +39,30 @@ def listar_solicitudes(
     estado: Optional[EstadoSolicitud] = None,
     pendientes: bool = False,
     activas: bool = False,
+    cliente_id: Optional[str] = None,
     db: Session = Depends(get_db),
     authorization: str = Header(None)
 ):
-    """Listar solicitudes del taller del usuario autenticado."""
-    taller_id = get_current_taller_id(authorization)
+    """Listar solicitudes. Soporta filtrado por taller (vía token) o por cliente_id."""
+    # Si se envía un token, intentar extraer taller_id
+    taller_id = None
+    if authorization:
+        taller_id = get_current_taller_id(authorization)
     
-    query = db.query(SolicitudDB)
-    
-    # Filtrar por taller: mostrar solicitudes del taller del usuario
-    # O solicitudes pendientes sin asignar (para que puedan ser "reclamadas")
-    if taller_id:
+    query = db.query(SolicitudDB).options(joinedload(SolicitudDB.cliente))
+
+    # Prioridad de filtrado:
+    # 1. Si se especifica cliente_id (usado por la app móvil)
+    if cliente_id:
+        query = query.filter(SolicitudDB.cliente_id == cliente_id)
+    # 2. Si hay un taller_id (usado por la web admin)
+    elif taller_id:
         query = query.filter(
             (SolicitudDB.taller_id == taller_id) | 
             ((SolicitudDB.taller_id.is_(None)) & (SolicitudDB.estado == EstadoDB["PENDIENTE"]))
         )
+    # 3. Acceso público / sin token
     else:
-        # Si no tiene taller, solo mostrar solicitudes pendientes sin asignar
         query = query.filter(SolicitudDB.taller_id.is_(None))
 
     if estado:
@@ -67,6 +76,26 @@ def listar_solicitudes(
     return [_solicitud_to_dict(s, db) for s in query.all()]
 
 
+def _convert_analisis_ia_to_camelcase(data: dict) -> dict:
+    """Convertir claves de analisis_ia de snake_case a camelCase."""
+    if not data:
+        return None
+    
+    key_mapping = {
+        'transcripcion_audio': 'transcripcionAudio',
+        'tipo_problema': 'tipoProblema',
+        'prioridad': 'prioridad',
+        'daños_detectados': 'danosDetectados',
+        'piezas_sugeridas': 'piezasSugeridas',
+        'costo_estimado': 'costoEstimado',
+        'tiempo_estimado_minutos': 'tiempoEstimadoMinutos',
+        'resumen': 'resumen',
+        'confianza': 'confianza',
+    }
+    
+    return {key_mapping.get(k, k): v for k, v in data.items()}
+
+
 def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
     """Convertir modelo SQL a dict para respuesta API."""
     result = {
@@ -77,7 +106,7 @@ def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
             "nombre": s.cliente.nombre,
             "telefono": s.cliente.telefono,
             "email": s.cliente.email,
-            "foto": s.cliente.foto,
+            "foto": ensure_full_url(s.cliente.foto),
             "lat": s.cliente.lat,
             "lng": s.cliente.lng,
             "veces_atendido": s.cliente.veces_atendido,
@@ -95,18 +124,30 @@ def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
         "descripcion": s.descripcion,
         "problema": s.problema,
         "distancia": s.distancia,
-        "estado": s.estado.value,
+        "estado": s.estado.value if hasattr(s.estado, 'value') else s.estado,
         "requiere_repuestos": s.requiere_repuestos,
-        "tipo": s.tipo.value,
-        "imagenes": json.loads(s.imagenes) if s.imagenes else [],
-        "audio": s.audio,
+        "tipo": s.tipo.value if hasattr(s.tipo, 'value') else s.tipo,
+        "imagenes": [ensure_full_url(img) for img in json.loads(s.imagenes)] if s.imagenes else [],
+        "audio": ensure_full_url(s.audio) if s.audio else None,
         "mecanico_asignado": None,
         "personal_asignado": None,
         "estado_pago": s.estado_pago or "pendiente",
         "monto_pago": s.monto_pago,
+        "analisisIA": _convert_analisis_ia_to_camelcase(json.loads(s.analisis_ia)) if s.analisis_ia else None,
         "timestamp": s.created_at.isoformat() if s.created_at else None,
+        "lat": s.lat,
+        "lng": s.lng,
+        "taller": {
+            "id": s.taller.id,
+            "nombre": s.taller.nombre,
+            "lat": s.taller.lat,
+            "lng": s.taller.lng,
+            "direccion": s.taller.direccion,
+            "telefono": s.taller.telefono,
+            "calificacion": s.taller.calificacion,
+        } if s.taller else None,
     }
-
+    
     # Cargar personal asignado si hay conexión a DB
     if db:
         asignaciones = db.query(SolicitudPersonal).filter(
@@ -120,7 +161,7 @@ def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
                     "id": a.personal.id,
                     "nombre": a.personal.nombre,
                     "rol": a.personal.rol,
-                    "foto": a.personal.foto,
+                    "foto": ensure_full_url(a.personal.foto),
                     "telefono": a.personal.telefono,
                     "fecha_asignacion": a.fecha_asignacion.isoformat() if a.fecha_asignacion else None,
                 }
@@ -134,7 +175,7 @@ def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
 def obtener_solicitud(solicitud_id: str, db: Session = Depends(get_db)):
     """Obtener solicitud por ID."""
     print(f"[BACKEND] GET solicitud {solicitud_id}")
-    solicitud = db.query(SolicitudDB).filter(SolicitudDB.id == solicitud_id).first()
+    solicitud = db.query(SolicitudDB).options(joinedload(SolicitudDB.cliente)).filter(SolicitudDB.id == solicitud_id).first()
     if not solicitud:
         print(f"[BACKEND] ERROR: Solicitud {solicitud_id} no encontrada")
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
@@ -166,6 +207,9 @@ async def crear_solicitud(
     if x_platform == "web" and not taller_id:
         raise HTTPException(status_code=403, detail="Usuario no tiene un taller asignado")
 
+    # Debug: Verificar qué análisis IA se recibe
+    print(f"[BACKEND] Creando solicitud - analisis_ia recibido: {solicitud.analisis_ia}")
+
     # Crear solicitud en PostgreSQL
     nueva = SolicitudDB(
         id=str(uuid.uuid4()),
@@ -185,6 +229,9 @@ async def crear_solicitud(
         tipo=TipoDB(solicitud.tipo.value) if hasattr(solicitud.tipo, 'value') else TipoDB.NORMAL,
         imagenes=json.dumps(solicitud.imagenes or []),
         audio=solicitud.audio,
+        analisis_ia=json.dumps(solicitud.analisis_ia.model_dump() if solicitud.analisis_ia else None),
+        lat=solicitud.lat,
+        lng=solicitud.lng,
     )
 
     db.add(nueva)
@@ -251,7 +298,7 @@ def actualizar_solicitud(solicitud_id: str, solicitud: SolicitudUpdate, db: Sess
         if hasattr(existing, key):
             setattr(existing, key, value)
 
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = get_now()
     db.commit()
     db.refresh(existing)
     return _solicitud_to_dict(existing, db)
@@ -272,7 +319,7 @@ async def cambiar_estado(solicitud_id: str, data: EstadoUpdate, db: Session = De
 
     estado_anterior = existing.estado.value
     existing.estado = EstadoDB[data.estado.name]
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = get_now()
     
     # Guardar referencia al cliente_id para notificaciones
     cliente_id = existing.cliente_id
@@ -286,12 +333,12 @@ async def cambiar_estado(solicitud_id: str, data: EstadoUpdate, db: Session = De
         ).all()
 
         for asignacion in asignaciones:
-            asignacion.fecha_liberacion = datetime.utcnow()
+            asignacion.fecha_liberacion = get_now()
             # Cambiar estado del personal a disponible
             personal = db.query(Personal).filter(Personal.id == asignacion.personal_id).first()
             if personal:
                 personal.estado = "disponible"
-                personal.updated_at = datetime.utcnow()
+                personal.updated_at = get_now()
 
     db.commit()
     db.refresh(existing)
@@ -352,19 +399,19 @@ async def asignar_personal(
             solicitud_id=solicitud_id,
             personal_id=personal_id,
             rol_asignado=personal.rol,
-            fecha_asignacion=datetime.utcnow(),
+            fecha_asignacion=get_now(),
         )
         db.add(asignacion)
 
         # Cambiar estado del personal a ocupado
         personal.estado = "ocupado"
-        personal.updated_at = datetime.utcnow()
+        personal.updated_at = get_now()
 
         print(f"[BACKEND] Asignado {personal.nombre} ({personal.rol}) a solicitud {solicitud_id}")
 
     # Cambiar estado de la solicitud a aceptada
     solicitud.estado = EstadoDB["ACEPTADA"]
-    solicitud.updated_at = datetime.utcnow()
+    solicitud.updated_at = get_now()
 
     db.commit()
     db.refresh(solicitud)
@@ -408,12 +455,12 @@ def liberar_personal(solicitud_id: str, db: Session = Depends(get_db)):
 
     # Liberar cada asignación y marcar personal como disponible
     for asignacion in asignaciones:
-        asignacion.fecha_liberacion = datetime.utcnow()
+        asignacion.fecha_liberacion = get_now()
 
         personal = db.query(Personal).filter(Personal.id == asignacion.personal_id).first()
         if personal:
             personal.estado = "disponible"
-            personal.updated_at = datetime.utcnow()
+            personal.updated_at = get_now()
             print(f"[BACKEND] Personal {personal.nombre} liberado")
 
     db.commit()

@@ -5,6 +5,7 @@ from models import Factura, FacturaUpdate
 from database_sql import get_db, Factura as FacturaDB, Solicitud, Cliente
 from sqlalchemy.orm import Session
 from datetime import datetime
+from utils.timezone import get_now
 import uuid
 from utils.security import get_taller_id_from_token
 
@@ -132,7 +133,7 @@ def actualizar_factura(factura_id: str, factura: FacturaUpdate, db: Session = De
         if hasattr(existing, key):
             setattr(existing, key, value)
     
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = get_now()
     db.commit()
     db.refresh(existing)
     return _factura_to_dict(existing)
@@ -146,7 +147,7 @@ def enviar_factura(factura_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Factura no encontrada")
     
     existing.enviada = True
-    existing.updated_at = datetime.utcnow()
+    existing.updated_at = get_now()
     db.commit()
     return {"success": True, "message": "Factura marcada como enviada"}
 

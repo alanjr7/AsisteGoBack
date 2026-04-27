@@ -69,6 +69,10 @@ Sé conservador en las estimaciones de tiempo. Es mejor superar expectativas."""
 
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY no configurada")
+        
+        # Log para verificar que la llave se cargó correctamente (sin mostrarla toda)
+        masked_key = f"{self.api_key[:10]}...{self.api_key[-5:]}"
+        print(f"🚀 [OpenRouter] Cliente inicializado. Modelo: {self.model}, Key: {masked_key}")
 
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",

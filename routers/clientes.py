@@ -4,6 +4,7 @@ from models import Cliente, ClienteCreate, ClienteUpdate
 from database_sql import get_db, Cliente as ClienteDB, Vehiculo as VehiculoDB, Solicitud
 from sqlalchemy.orm import Session
 from utils.security import get_taller_id_from_token
+from utils.supabase_storage import ensure_full_url
 import uuid
 
 router = APIRouter()
@@ -24,7 +25,7 @@ def _cliente_to_dict(c: ClienteDB) -> dict:
         "nombre": c.nombre,
         "telefono": c.telefono,
         "email": c.email,
-        "foto": c.foto,
+        "foto": ensure_full_url(c.foto),
         "lat": c.lat,
         "lng": c.lng,
         "veces_atendido": c.veces_atendido,

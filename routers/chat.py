@@ -6,9 +6,11 @@ from database import db as memory_db
 from database_sql import get_db, Solicitud as SolicitudDB
 from sqlalchemy.orm import Session
 from datetime import datetime
+from utils.timezone import get_now
 from utils.openrouter_client import get_openrouter_client
 from utils.rate_limiter import limiter, IA_RATE_LIMIT
 from utils.security import get_taller_id_from_token
+from utils.supabase_storage import ensure_full_url
 
 router = APIRouter()
 
@@ -67,6 +69,14 @@ def obtener_mensajes(
         pass
     
     mensajes = memory_db.mensajes_chat.get(solicitud_id, [])
+    
+    # Asegurar URLs completas
+    for m in mensajes:
+        if m.get("imagen"):
+            m["imagen"] = ensure_full_url(m["imagen"])
+        if m.get("audio"):
+            m["audio"] = ensure_full_url(m["audio"])
+            
     return sorted(mensajes, key=lambda x: x.get("timestamp", ""))
 
 
@@ -86,7 +96,7 @@ def enviar_mensaje(
     
     data = mensaje.model_dump()
     data["id"] = memory_db.generate_id()
-    data["timestamp"] = datetime.now().isoformat()
+    data["timestamp"] = get_now().isoformat()
     
     if solicitud_id not in memory_db.mensajes_chat:
         memory_db.mensajes_chat[solicitud_id] = []

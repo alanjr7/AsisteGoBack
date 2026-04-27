@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import Optional, List
 from datetime import datetime, date, timedelta
+from utils.timezone import get_now
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, extract
@@ -92,7 +93,7 @@ def reporte_solicitudes(
 
     return ReporteResumen(
         tipo="solicitudes",
-        fecha_generacion=datetime.utcnow(),
+        fecha_generacion=get_now(),
         periodo=f"{fecha_inicio} a {fecha_fin}",
         total_registros=len(solicitudes),
         datos={
@@ -145,7 +146,7 @@ def reporte_pagos(
 
     return ReporteResumen(
         tipo="pagos",
-        fecha_generacion=datetime.utcnow(),
+        fecha_generacion=get_now(),
         periodo=f"{fecha_inicio} a {fecha_fin}",
         total_registros=len(facturas),
         datos={
@@ -195,7 +196,7 @@ def reporte_personal(
 
     return ReporteResumen(
         tipo="personal",
-        fecha_generacion=datetime.utcnow(),
+        fecha_generacion=get_now(),
         periodo=f"{fecha_inicio} a {fecha_fin}",
         total_registros=len(personal),
         datos={
@@ -257,7 +258,7 @@ def reporte_clientes(
 
     return ReporteResumen(
         tipo="clientes",
-        fecha_generacion=datetime.utcnow(),
+        fecha_generacion=get_now(),
         periodo=f"{fecha_inicio} a {fecha_fin}",
         total_registros=len(clientes),
         datos={
