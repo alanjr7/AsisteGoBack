@@ -49,10 +49,8 @@ os.makedirs(os.path.join(UPLOAD_DIR, "audio"), exist_ok=True)
 os.makedirs(os.path.join(UPLOAD_DIR, "comprobantes"), exist_ok=True)
 os.makedirs(os.path.join(UPLOAD_DIR, "perfiles"), exist_ok=True)
 
-# Servir archivos estáticos (imágenes, audios, comprobantes)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
-
-#sql Configurar CORS para producción (dominios específicos)
+#sql Configurar CORS PRIMERO (antes de cualquier otra cosa)
+# El orden es CRÍTICO: CORS debe aplicarse antes de cualquier ruta
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -69,7 +67,13 @@ app.add_middleware(
     allow_credentials=True,  # Permitir cookies/tokens de autenticación
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],  # Exponer todos los headers
+    max_age=3600,  # Cache preflight por 1 hora
 )
+print("[MAIN] CORS middleware configurado")
+
+# Servir archivos estáticos DESPUÉS de CORS
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Incluir routers
 app.include_router(auth.router, prefix="/auth", tags=["Autenticación"])
