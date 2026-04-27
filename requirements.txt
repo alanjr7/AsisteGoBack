@@ -57,7 +57,7 @@ tzdata==2025.2
 urllib3==2.5.0
 uvicorn==0.27.0
 watchfiles==1.1.1
-websockets==16.0
+websockets==12.0
 wheel==0.45.1
 whitenoise==6.11.0
 wrapt==2.1.2
