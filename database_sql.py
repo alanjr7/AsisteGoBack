@@ -16,6 +16,13 @@ def get_database_url():
     """Obtener y procesar la URL de base de datos."""
     database_url = os.getenv("DATABASE_URL", "sqlite:///./asistego.db")
     
+    # Log para debugging (ocultar password)
+    if database_url and "://" in database_url:
+        masked_url = database_url.split("://")[0] + "://***@***" + database_url.rsplit("@", 1)[1] if "@" in database_url else database_url
+        print(f"[DATABASE] DATABASE_URL detectada: {masked_url}")
+    else:
+        print(f"[DATABASE] DATABASE_URL no encontrada, usando default: {database_url}")
+    
     # Render usa 'postgres://' o 'postgresql://' pero SQLAlchemy necesita 'postgresql+psycopg2://'
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)

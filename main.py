@@ -3,10 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 
-# Cargar variables de entorno desde .env al inicio
+# Cargar variables de entorno desde .env al inicio (solo para desarrollo local)
 from dotenv import load_dotenv
-load_dotenv(override=True)
-print("[MAIN] Variables de entorno cargadas desde .env")
+load_dotenv(override=False)  # No sobreescribir variables de entorno existentes (como en Render)
+print("[MAIN] Variables de entorno cargadas")
 
 # Importar routers
 from routers import auth, clientes, solicitudes, repuestos, solicitudes_repuesto
