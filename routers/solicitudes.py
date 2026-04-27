@@ -98,20 +98,46 @@ def _convert_analisis_ia_to_camelcase(data: dict) -> dict:
 
 def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
     """Convertir modelo SQL a dict para respuesta API."""
+    # Manejo defensivo para cliente (puede ser null o lazy load fallido)
+    cliente_data = None
+    try:
+        if s.cliente and hasattr(s.cliente, 'id'):
+            cliente_data = {
+                "id": s.cliente.id,
+                "nombre": s.cliente.nombre,
+                "telefono": s.cliente.telefono,
+                "email": s.cliente.email,
+                "foto": ensure_full_url(s.cliente.foto),
+                "lat": s.cliente.lat,
+                "lng": s.cliente.lng,
+                "veces_atendido": s.cliente.veces_atendido,
+                "calificacion_promedio": s.cliente.calificacion_promedio,
+            }
+    except Exception as e:
+        print(f"[BACKEND] Advertencia: No se pudo cargar cliente para solicitud {s.id}: {e}")
+        cliente_data = None
+
+    # Manejo defensivo para taller (puede ser null o lazy load fallido)
+    taller_data = None
+    try:
+        if s.taller and hasattr(s.taller, 'id'):
+            taller_data = {
+                "id": s.taller.id,
+                "nombre": s.taller.nombre,
+                "lat": s.taller.lat,
+                "lng": s.taller.lng,
+                "direccion": s.taller.direccion,
+                "telefono": s.taller.telefono,
+                "calificacion": s.taller.calificacion,
+            }
+    except Exception as e:
+        print(f"[BACKEND] Advertencia: No se pudo cargar taller para solicitud {s.id}: {e}")
+        taller_data = None
+
     result = {
         "id": s.id,
         "cliente_id": s.cliente_id,
-        "cliente": {
-            "id": s.cliente.id,
-            "nombre": s.cliente.nombre,
-            "telefono": s.cliente.telefono,
-            "email": s.cliente.email,
-            "foto": ensure_full_url(s.cliente.foto),
-            "lat": s.cliente.lat,
-            "lng": s.cliente.lng,
-            "veces_atendido": s.cliente.veces_atendido,
-            "calificacion_promedio": s.cliente.calificacion_promedio,
-        } if s.cliente else None,
+        "cliente": cliente_data,
         "vehiculo": {
             "id": str(uuid.uuid4()),
             "marca": s.vehiculo_marca,
@@ -137,15 +163,7 @@ def _solicitud_to_dict(s: SolicitudDB, db: Session = None) -> dict:
         "timestamp": s.created_at.isoformat() if s.created_at else None,
         "lat": s.lat,
         "lng": s.lng,
-        "taller": {
-            "id": s.taller.id,
-            "nombre": s.taller.nombre,
-            "lat": s.taller.lat,
-            "lng": s.taller.lng,
-            "direccion": s.taller.direccion,
-            "telefono": s.taller.telefono,
-            "calificacion": s.taller.calificacion,
-        } if s.taller else None,
+        "taller": taller_data,
     }
     
     # Cargar personal asignado si hay conexión a DB
