@@ -20,9 +20,13 @@ from sqlalchemy.orm import Session
 from fastapi import Depends
 
 # Rate limiting
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from utils.rate_limiter import limiter
+try:
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from utils.rate_limiter import limiter
+except ImportError as e:
+    print(f"⚠️ Error importando rate limiting: {str(e)}")
+    limiter = None
 
 app = FastAPI(
     title="Asistego API",
@@ -31,8 +35,11 @@ app = FastAPI(
 )
 
 # Configurar rate limiting
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+if limiter:
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+else:
+    print("⚠️ Rate limiting deshabilitado debido a error de importación")
 
 # Configurar directorio de uploads
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
@@ -122,6 +129,10 @@ def check_database(db: Session = Depends(get_db)):
 def startup_event():
     """Crear tablas de base de datos al iniciar."""
     print("🚀 Iniciando Asistego API...")
-    create_tables()
-    print("✅ Tablas de base de datos verificadas/creadas")
+    try:
+        create_tables()
+        print("✅ Tablas de base de datos verificadas/creadas")
+    except Exception as e:
+        print(f"⚠️ Error al crear tablas de base de datos: {str(e)}")
+        print("⚠️ La API continuará iniciando, pero algunas funciones pueden no estar disponibles")
     # init_mock_data()  # Commented out to use only real data

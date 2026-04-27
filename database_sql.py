@@ -514,10 +514,14 @@ def migrate_temp_password_columns():
 
 def create_tables():
     """Crear todas las tablas y migrar columnas."""
-    Base.metadata.create_all(bind=engine)
-    migrate_taller_columns()
-    migrate_analisis_ia_column()
-    migrate_temp_password_columns()
+    try:
+        Base.metadata.create_all(bind=engine)
+        migrate_taller_columns()
+        migrate_analisis_ia_column()
+        migrate_temp_password_columns()
+    except Exception as e:
+        print(f"[DATABASE] Error durante la creación/migración de tablas: {str(e)}")
+        raise
 
 
 def init_mock_data():
