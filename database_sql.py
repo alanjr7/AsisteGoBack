@@ -486,27 +486,27 @@ def migrate_analisis_ia_column():
         db.close()
 
 
-def migrate_temp_password_columns():
-    """Migrar columnas para recuperación de contraseña si no existen."""
+def migrate_lat_lng_columns():
+    """Migrar columnas lat y lng si no existen en tabla solicitudes."""
     from sqlalchemy import text
-    
+
     db = SessionLocal()
     try:
-        # Columnas para recuperación de contraseña
-        temp_password_columns = [
-            ('users', 'temp_password_hash', 'VARCHAR(255) NULL'),
-            ('users', 'temp_password_expires_at', 'TIMESTAMP NULL'),
+        # Columnas lat/lng para solicitudes
+        lat_lng_columns = [
+            ('solicitudes', 'lat', 'FLOAT NULL'),
+            ('solicitudes', 'lng', 'FLOAT NULL'),
         ]
-        
-        for table_name, column_name, column_type in temp_password_columns:
+
+        for table_name, column_name, column_type in lat_lng_columns:
             check_column = text(f"""
                 SELECT EXISTS (
-                    SELECT FROM information_schema.columns 
+                    SELECT FROM information_schema.columns
                     WHERE table_name = '{table_name}' AND column_name = '{column_name}'
                 );
             """)
             column_exists = db.execute(check_column).scalar()
-            
+
             if not column_exists:
                 print(f"📋 Agregando columna {column_name} a tabla {table_name}...")
                 db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
@@ -514,7 +514,43 @@ def migrate_temp_password_columns():
                 print(f"✅ Columna {column_name} agregada a {table_name}")
             else:
                 print(f"✅ Columna {column_name} ya existe en {table_name}")
-        
+
+    except Exception as e:
+        print(f"❌ Error migrando columnas lat/lng: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def migrate_temp_password_columns():
+    """Migrar columnas para recuperación de contraseña si no existen."""
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        # Columnas para recuperación de contraseña
+        temp_password_columns = [
+            ('users', 'temp_password_hash', 'VARCHAR(255) NULL'),
+            ('users', 'temp_password_expires_at', 'TIMESTAMP NULL'),
+        ]
+
+        for table_name, column_name, column_type in temp_password_columns:
+            check_column = text(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.columns
+                    WHERE table_name = '{table_name}' AND column_name = '{column_name}'
+                );
+            """)
+            column_exists = db.execute(check_column).scalar()
+
+            if not column_exists:
+                print(f"📋 Agregando columna {column_name} a tabla {table_name}...")
+                db.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
+                db.commit()
+                print(f"✅ Columna {column_name} agregada a {table_name}")
+            else:
+                print(f"✅ Columna {column_name} ya existe en {table_name}")
+
     except Exception as e:
         print(f"❌ Error migrando columnas de recuperación de contraseña: {e}")
         db.rollback()
@@ -529,6 +565,7 @@ def create_tables():
         migrate_taller_columns()
         migrate_analisis_ia_column()
         migrate_temp_password_columns()
+        migrate_lat_lng_columns()
     except Exception as e:
         print(f"[DATABASE] Error durante la creación/migración de tablas: {str(e)}")
         raise
