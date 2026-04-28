@@ -123,7 +123,11 @@ def marcar_mensajes_leidos(
 
 @router.post("/ia/consultar", response_model=ConsultaIAResponse)
 @limiter.limit(IA_RATE_LIMIT)
-def consultar_ia(request: Request, data: ConsultaIARequest):
+def consultar_ia(
+    request: Request,
+    data: ConsultaIARequest,
+    db: Session = Depends(get_db)
+):
     """
     Consultar al asistente de IA de Asistego.
     Útil para preguntas frecuentes, información de servicios, etc.
@@ -135,12 +139,17 @@ def consultar_ia(request: Request, data: ConsultaIARequest):
         # Construir contexto si hay solicitud_id
         contexto = None
         if data.solicitud_id:
-            solicitud = db.get_by_id("solicitudes", data.solicitud_id)
+            solicitud = db.query(SolicitudDB).filter(SolicitudDB.id == data.solicitud_id).first()
             if solicitud:
                 contexto = {
-                    "problema": solicitud.get("problema"),
-                    "estado": solicitud.get("estado"),
-                    "vehiculo": solicitud.get("vehiculo"),
+                    "problema": solicitud.problema,
+                    "estado": solicitud.estado.value if solicitud.estado else None,
+                    "vehiculo": {
+                        "marca": solicitud.vehiculo_marca,
+                        "modelo": solicitud.vehiculo_modelo,
+                        "anio": solicitud.vehiculo_anio,
+                        "placa": solicitud.vehiculo_placa,
+                    },
                 }
 
         resultado = client.consultar_chat(data.mensaje, contexto)

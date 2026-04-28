@@ -15,7 +15,7 @@ from routers import upload, grua, evidencias, comprobantes, websocket, pagos, ve
 from routers import admin
 
 # Importar configuración de base de datos
-from database_sql import create_tables, get_db, User, init_mock_data
+from database_sql import create_tables, get_db, User
 from sqlalchemy.orm import Session
 from fastapi import Depends
 
@@ -49,8 +49,7 @@ os.makedirs(os.path.join(UPLOAD_DIR, "audio"), exist_ok=True)
 os.makedirs(os.path.join(UPLOAD_DIR, "comprobantes"), exist_ok=True)
 os.makedirs(os.path.join(UPLOAD_DIR, "perfiles"), exist_ok=True)
 
-#sql Configurar CORS PRIMERO (antes de cualquier otra cosa)
-# El orden es CRÍTICO: CORS debe aplicarse antes de cualquier ruta
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
